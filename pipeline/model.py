@@ -11,7 +11,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.special import digamma
+from scipy.optimize import minimize_scalar
+from scipy.special import gammaln
 
 K = 9
 ALPHA0 = 0.5   # Jeffreys at the global root
@@ -101,31 +102,15 @@ def count_tensors(df: pd.DataFrame, geo: GeoIndex, types: list[str],
     return C_tract, C_nta, C_boro, C_city, R_tract
 
 
-def mom_icc_init(n: np.ndarray, _m: np.ndarray) -> float:
-    """§2.2 ANOVA/ICC method-of-moments initializer. n: (J, K) child counts."""
-    J = n.shape[0]
-    nj = n.sum(1)
-    N = nj.sum()
-    if J < 2 or N <= J:
-        return 50.0
-    nbar_c = (N - (nj ** 2).sum() / N) / (J - 1)
-    phat = n / nj[:, None]
-    mbar = n.sum(0) / N
-    msb = (nj[:, None] * (phat - mbar) ** 2).sum(0) / (J - 1)
-    msw = (nj[:, None] * phat * (1 - phat)).sum(0) / (N - J)
-    denom = msb + (nbar_c - 1) * msw
-    wk = mbar * (1 - mbar)
-    ok = denom > 0
-    if not ok.any() or wk[ok].sum() == 0:
-        return 50.0
-    rho = ((msb - msw)[ok] * wk[ok]).sum() / (denom[ok] * wk[ok]).sum()
-    if rho <= 0:
-        return KAPPA_MAX
-    return float(np.clip((1 - rho) / rho, KAPPA_MIN, KAPPA_MAX))
-
-
 def fit_kappa(child_counts: np.ndarray, parent_means: np.ndarray) -> float | None:
-    """§2.1 Minka fixed point for DM concentration with fixed per-child means.
+    """MLE of the DM concentration with fixed per-child means, by bracketed
+    maximization of the exact marginal log-likelihood over log kappa.
+
+    Replaces the Minka fixed-point iteration: on the flat likelihood surfaces
+    typical here the fixed point converges too slowly and stops far short of the
+    optimum (verified against a grid of the exact marginal likelihood), which
+    systematically under-pools. Bounded scalar maximization is exact and cheap
+    (~30 likelihood evaluations per (type, level)).
 
     child_counts: (J, K) decayed counts; parent_means: (J, K) each child's parent mean.
     Returns None if too few informative children (caller uses pooled fallback).
@@ -134,23 +119,114 @@ def fit_kappa(child_counts: np.ndarray, parent_means: np.ndarray) -> float | Non
     n, m = child_counts[keep], parent_means[keep]
     if (n.sum(1) >= 5).sum() < 8:
         return None
-    kappa = mom_icc_init(n, m)
-    for _ in range(200):
-        km = np.clip(kappa * m, 1e-12, None)
-        num = (m * (digamma(n + km) - digamma(km))).sum()
-        den = (digamma(n.sum(1) + kappa) - digamma(kappa)).sum()
-        if den <= 0:
-            break
-        new = float(np.clip(kappa * num / den, KAPPA_MIN, KAPPA_MAX))
-        if abs(np.log(new) - np.log(kappa)) < 1e-6:
-            kappa = new
-            break
-        kappa = new
-    return kappa
+    nj = n.sum(1)
+
+    def negll(log_k: float) -> float:
+        k = np.exp(log_k)
+        km = np.clip(k * m, 1e-12, None)
+        ll = (gammaln(k) - gammaln(nj + k) + (gammaln(n + km) - gammaln(km)).sum(1)).sum()
+        return -float(ll)
+
+    res = minimize_scalar(negll, bounds=(np.log(KAPPA_MIN), np.log(KAPPA_MAX)),
+                          method="bounded", options={"xatol": 1e-4})
+    return float(np.clip(np.exp(res.x), KAPPA_MIN, KAPPA_MAX))
 
 
 def _normalize(a: np.ndarray) -> np.ndarray:
     return a / a.sum(-1, keepdims=True)
+
+
+def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
+                          origins: list[str], horizon_days: int = 60,
+                          min_cell: int = 50, q: float = 0.90) -> dict:
+    """Per-type additive regime-variance for credible-interval calibration.
+
+    The Dirichlet posterior interval covers sampling uncertainty about the current
+    decay-weighted rate, but a cell's realized near-future rate also moves with the
+    service regime (seasonality, agency policy/backlog changes, correlated batch
+    closures). On dense cells that regime variability dominates the (tiny) sampling
+    term, so raw intervals badly under-cover (verified ~0.25 at nominal 90% against
+    next-60-day empirical rates). Remedy: estimate, per complaint type and cumulative
+    cut, an additive standard deviation sigma such that
+        halfwidth = 1.645 * sqrt(Var_Dirichlet(cum) + sigma^2)
+    covers ~q of near-future cell rates historically.
+
+    Estimator: for several rolling origins inside the training window, fit the model
+    on data before the origin and compare each dense cell's posterior cumulative mean
+    with its empirical rate over the following horizon; sigma[type][cut] is the q-th
+    percentile of squared deviation in excess of the sampling variance (model +
+    horizon sample), pooled across origins, with a pooled-over-types fallback for
+    thin types. Multiple origins spread across the year average over seasonal
+    regimes. Additive (not multiplicative) so sparse cells - whose intervals are
+    already wide - are only modestly widened.
+
+    Returns {"per_type": {type: [sigma at 8 cuts]}, "pooled": [8 cuts]}.
+    """
+    cfg = Config("sigma-est", kappa_mode="per_type_level", half_life_days=90.0)
+    named = [t for t in types if t != "Other"]
+    rows = []  # (type, cut, excess squared deviation)
+    for o in origins:
+        fe = pd.Timestamp(o)
+        tr = df[df["created_date"] < fe].copy()
+        ho = df[(df["created_date"] >= fe) &
+                (df["created_date"] < fe + pd.Timedelta(days=horizon_days))]
+        ho = ho[ho["geoid"].notna()]
+        if len(tr) == 0 or len(ho) == 0:
+            continue
+        tr["ctype"] = collapse_types(tr["complaint_type"], named)
+        ho = ho.assign(ctype=collapse_types(ho["complaint_type"], named))
+        fm = fit(tr, geo, types, cfg, fe)
+        a = fm.a_tract
+        A = a.sum(-1)
+        tix = {t: i for i, t in enumerate(types)}
+
+        # per-cell bin histogram -> empirical cumulative rates at all cuts at once
+        ct = ho.groupby(["geoid", "ctype", "bin"], observed=True).size().unstack(
+            "bin", fill_value=0).reindex(columns=range(K), fill_value=0)
+        n_cell = ct.sum(1).to_numpy()
+        keep = n_cell >= min_cell
+        ct = ct[keep]
+        n_cell = n_cell[keep]
+        emp_cum = ct.to_numpy().cumsum(1)[:, :-1] / n_cell[:, None]   # (cells, 8)
+        gi = np.array([geo.tract_ix.get(g, -1) for g in ct.index.get_level_values(0)])
+        ti = np.array([tix.get(t, -1) for t in ct.index.get_level_values(1)])
+        ok = (gi >= 0) & (ti >= 0)
+        mid = a.cumsum(-1)[..., :-1] / A[..., None]                   # (tract, T+1, 8)
+        m = mid[gi[ok], ti[ok]]                                       # (cells, 8)
+        var0 = m * (1 - m) / (A[gi[ok], ti[ok], None] + 1)
+        samp = var0 + m * (1 - m) / n_cell[ok, None]
+        ex2 = np.maximum((emp_cum[ok] - m) ** 2 - samp, 0.0)
+        tnames = ct.index.get_level_values(1).to_numpy()[ok]
+        for cut in range(K - 1):
+            rows.extend(zip(tnames, [cut] * ok.sum(), ex2[:, cut]))
+
+        # the ALL (all-types pooled) tree, used by the UI's default view
+        ct2 = ho.groupby(["geoid", "bin"], observed=True).size().unstack(
+            "bin", fill_value=0).reindex(columns=range(K), fill_value=0)
+        n2 = ct2.sum(1).to_numpy()
+        ct2 = ct2[n2 >= min_cell]
+        n2 = n2[n2 >= min_cell]
+        emp2 = ct2.to_numpy().cumsum(1)[:, :-1] / n2[:, None]
+        gi2 = np.array([geo.tract_ix.get(g, -1) for g in ct2.index])
+        ok2 = gi2 >= 0
+        T = len(types)
+        m2 = mid[gi2[ok2], T]
+        samp2 = m2 * (1 - m2) / (A[gi2[ok2], T, None] + 1) + m2 * (1 - m2) / n2[ok2, None]
+        ex2b = np.maximum((emp2[ok2] - m2) ** 2 - samp2, 0.0)
+        for cut in range(K - 1):
+            rows.extend(zip(["ALL"] * int(ok2.sum()), [cut] * int(ok2.sum()), ex2b[:, cut]))
+    z = pd.DataFrame(rows, columns=["t", "cut", "ex2"])
+    pooled = [float(np.sqrt(z[z["cut"] == c]["ex2"].quantile(q)) / 1.645)
+              for c in range(K - 1)]
+    per_type = {}
+    for t in types + ["ALL"]:
+        zt = z[z["t"] == t]
+        per_type[t] = [
+            float(np.sqrt(zt[zt["cut"] == c]["ex2"].quantile(q)) / 1.645)
+            if (zt["cut"] == c).sum() >= 60 else pooled[c]
+            for c in range(K - 1)
+        ]
+    return {"per_type": per_type, "pooled": pooled}
 
 
 class FittedModel:

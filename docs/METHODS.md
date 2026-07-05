@@ -192,9 +192,12 @@ Everything the app shows is then closed-form from `a_tract` (with `A = Σ a`):
 
 - **Posterior mean** for each bin: `aₖ / A` — the probabilities on the ladder.
 - **Cumulative** "within X": partial sums of those means — the map metric.
-- **Uncertainty**: by a standard property of the Dirichlet, the cumulative "within 24h" has
-  a Beta distribution, so its exact 90% **credible interval** is two calls to the Beta
-  quantile function. These are the soft "faded bar ends" in the panel.
+- **Uncertainty**: the soft "faded bar ends" in the panel are 90% intervals built from two
+  variance components: the Dirichlet posterior's **sampling variance** (a standard closed
+  form), plus a per-type **regime variance** estimated from rolling temporal holdouts —
+  because a cell's realized near-future rate moves with seasonality and agency behavior,
+  not just sampling noise (§6.1 shows why this second component is essential, not optional).
+  Half-width = 1.645·√(sampling + regime²).
 - **Shrinkage weight** `λ = n / (n + κ₃)` ∈ [0, 1]: the share of the estimate that comes
   from *this tract's own data* versus the borrowed neighborhood pattern.
 
@@ -208,18 +211,19 @@ Everything the app shows is then closed-form from `a_tract` (with `A = Σ a`):
 The concentration parameters κ decide *how strongly* a child is pulled toward its parent — in
 plain terms, "how many requests' worth of belief" the parent's pattern is worth before local
 data takes over. Rather than guess them, we **learn them from the data** by empirical Bayes:
-for each (type, level) we maximize the Dirichlet–Multinomial marginal likelihood using
-**Minka's fixed-point iteration**, started from a method-of-moments estimate based on how much
-the children actually vary around their parent (an intra-class-correlation argument). Types
-with fewer than 8 well-populated children fall back to a pooled per-level estimate.
+for each (type, level) we maximize the exact Dirichlet–Multinomial marginal likelihood by
+**bounded scalar optimization over log κ** (about thirty likelihood evaluations per
+parameter). Types with fewer than 8 well-populated children fall back to a pooled per-level
+estimate. An implementation note for practitioners: the commonly used Minka fixed-point
+iteration was tried first and quietly converged far short of the optimum on these flat
+likelihood surfaces (checked against a direct likelihood grid), systematically
+under-pooling — direct bounded maximization is just as cheap here and exact.
 
-The learned κ's are interpretable and vary sensibly by complaint type. For example, at the
-neighborhood→tract level, *Heat/Hot Water* learns κ ≈ 213 (strong pooling — heat resolution
-is fairly uniform within a neighborhood) while *Illegal Parking* learns κ ≈ 81 (more genuine
-block-to-block variation). Several spatially smooth types (Street Condition, Missed Collection)
-hit the κ ceiling, which is the model correctly saying "there is essentially no tract-level
-signal here beyond the neighborhood." The full κ table is in
-[evaluation_results.md](evaluation_results.md).
+The learned κ's are interpretable and vary sensibly by complaint type: strong pooling where
+resolution speed is uniform within a neighborhood, weaker where there is genuine
+block-to-block variation, and very large κ for spatially smooth types — the model correctly
+saying "there is essentially no tract-level signal here beyond the neighborhood." The full
+κ table is in [evaluation_results.md](evaluation_results.md).
 
 ### 4.5 An honest note on the approximation
 
@@ -303,25 +307,36 @@ no-pooling baselines score a log-loss of 2.197 — which is exactly `log(9)`, th
 shrug that says every bin is equally likely — while the hierarchy scores ~1.44 by falling
 back to the neighborhood. That gap is the entire value proposition of the method.
 
-### 6.1 Where the model is weakest (stated plainly)
+### 6.1 The uncertainty story: what the intervals had to learn the hard way
 
-> Two honest caveats. First, the city genuinely got a bit faster or
-> slower at some things between 2025 and 2026, so on the busiest blocks — where our
-> confidence intervals are very tight — the real 2026 rate sometimes drifts outside them.
-> That's not the model being overconfident about randomness; it's the world actually
-> changing, and it's exactly *why* the fast-decay version wins. Second, for a handful of
-> complaint types the model finds no meaningful block-to-block difference and shows you the
-> neighborhood pattern everywhere — which is the correct, honest answer when the signal
-> isn't there.
+> A plain-vanilla version of this model produces very tight "plausible ranges" on busy
+> blocks — thousands of past requests, so the math says it knows the rate precisely. But
+> when we tested those ranges against what actually happened next, they were wrong far too
+> often. The reason isn't randomness; it's that city services *change* — with the seasons,
+> with agency staffing and backlogs, with policy. So the shipped ranges include a second
+> ingredient, measured from history: how much each complaint type's rates typically move
+> over a couple of months. Busy blocks now get honest ranges instead of falsely precise
+> ones, and quiet blocks are barely affected (their ranges were already wide).
 
-Technically: credible-interval coverage on dense cells (~0.44 against a 0.90 target) and
-7-day calibration error (~0.023) sit just outside the ideal guardrails. Both are driven by
-**temporal drift** between the training year and the test period, not by within-period
-under-dispersion — which is confirmed by the fact that the *shortest* decay half-life
-minimizes both. The mitigations are already in the shipped design: aggressive decay plus
-monthly incremental updates. Because the deployed model trains through the latest available
-data (not a year-old cutoff like the backtest), its live calibration is better than the
-backtest implies. We report the numbers rather than tuning them away.
+Technically, the raw Dirichlet intervals badly under-covered on dense cells, and stress
+tests showed drift alone doesn't explain it: coverage was ~0.44 on the cross-year backtest,
+still only ~0.51 on an **even/odd-day split** where drift is impossible by construction, and
+~0.25 against rolling next-60-day holdouts. The failures concentrate where sampling variance
+is tiny, so any systematic regime movement (seasonality, batch closures, policy shifts)
+lands outside the interval. The fix is a per-type, per-threshold **additive regime variance**
+σ estimated from rolling temporal holdouts inside the training window: interval half-width
+= 1.645·√(sampling variance + σ²). Additive rather than multiplicative, so sparse cells —
+whose intervals are dominated by sampling uncertainty — are only modestly widened. With this
+calibration, backtest coverage lands at 0.90–0.92 (in the guardrail), and a fully
+out-of-sample next-60-day check gives 0.87 — slightly under target because early 2026 moved
+more than anything in the calibration year. That residual is irreducible regime-shift risk;
+the monthly update cycle re-centers the model continuously. The 7-day calibration error
+(~0.02, marginally above the 0.02 guardrail) shares the same drift cause and the same
+mitigation. We report these numbers rather than tuning them away.
+
+A second honest caveat, unchanged: for several complaint types the model finds no meaningful
+block-to-block difference and shows the neighborhood pattern everywhere — the correct answer
+when the signal isn't there (§7.1).
 
 ---
 
@@ -333,7 +348,7 @@ backtest implies. We report the numbers rather than tuning them away.
 | Big headline % | The same number for the selected tract, tracking the time scrubber |
 | Resolution-ladder bar length | Posterior-mean cumulative probability at each of the 8 thresholds |
 | Brighter cap on each bar | That bin's individual probability (the increment) |
-| Faded bar end | Exact 90% Bayesian credible interval on that cumulative |
+| Faded bar end | 90% interval: Dirichlet sampling variance + calibrated regime variance (§6.1) |
 | "1 month+" row | The tail probability — chance it takes longer than a month |
 | Data-strength dots ●●● / ○○○ | Shrinkage weight λ = n/(n+κ): how much is local vs. borrowed |
 | "~" prefix and wider fades | Low-data cells, flagged for honesty |

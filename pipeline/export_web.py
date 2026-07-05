@@ -12,7 +12,6 @@ import os
 
 import numpy as np
 import pandas as pd
-from scipy.stats import beta
 from shapely.geometry import mapping, shape
 
 import model as M
@@ -53,6 +52,16 @@ def main() -> None:
     T = len(types)                      # named types; slot T = ALL
     ship_types = ["ALL"] + types        # UI order: All complaints first
 
+    # credible-interval calibration: per-type additive regime variance, estimated
+    # from rolling temporal holdouts (model.estimate_regime_sigma docstring)
+    print("calibrating interval widths (rolling origins)...", flush=True)
+    origins = [str((t_ref - pd.Timedelta(days=d)).date()) for d in (270, 210, 150, 90)]
+    sig = M.estimate_regime_sigma(df, geo, types, origins)
+    sigma_vec = np.array([sig["per_type"][t] for t in types + ["ALL"]])  # (T+1, 8)
+    print("regime sigma at 24h cut:",
+          {t: round(sig["per_type"][t][1], 3) for t in ["ALL", "HEAT/HOT WATER", "Illegal Parking"]},
+          flush=True)
+
     # per-type flags (§6.5, §6.8, §5)
     dur_note = df.groupby("ctype", observed=True)["bin"].agg(
         open_share=lambda s: float((s == M.K - 1).mean()))
@@ -70,11 +79,13 @@ def main() -> None:
     n_obs = fm.R_tract.sum(-1)           # raw counts (n_tract, T+1)
     shrink = fm.shrinkage()             # (n_tract, T+1)
 
-    # 90% CIs on each of the 8 cumulative cuts
-    Ac = a.cumsum(-1)[..., :-1]          # (n_tract, T+1, 8)
-    Arest = A[..., None] - Ac
-    lo = beta.ppf(0.05, Ac, Arest)
-    hi = beta.ppf(0.95, Ac, Arest)
+    # 90% intervals on each of the 8 cumulative cuts: Dirichlet sampling variance
+    # plus the calibrated additive regime variance (posterior means unaffected).
+    mid_cum = a.cumsum(-1)[..., :-1] / A[..., None]                 # (n_tract, T+1, 8)
+    var_cum = mid_cum * (1 - mid_cum) / (A[..., None] + 1)
+    hw = 1.645 * np.sqrt(var_cum + sigma_vec[None, :, :] ** 2)
+    lo = np.clip(mid_cum - hw, 0, 1)
+    hi = np.clip(mid_cum + hw, 0, 1)
 
     def type_slot(name):
         return T if name == "ALL" else types.index(name)
@@ -132,11 +143,14 @@ def main() -> None:
         "refs": refs,
         "flags": flags,
         "model": {
-            "config": "P5a (hierarchical Dirichlet-Multinomial, EB κ, 90-day decay)",
+            "config": "P5a (hierarchical Dirichlet-Multinomial, EB κ via bounded MLE, "
+                      "90-day decay, regime-calibrated intervals)",
             "data_through": str(t_ref.date()),
             "n_requests": int(len(df)),
             "n_tracts": len(data),
             "updated_at": str(pd.Timestamp.now().date()),
+            "regime_sigma_24h": {t: round(float(sig["per_type"][t][1]), 4)
+                                 for t in ship_types},
         },
     }
     json.dump(meta, open(os.path.join(WEB_DATA, "meta.json"), "w"))

@@ -6,6 +6,15 @@
 **Status:** methodology specification (v1.0). No production code here; §9 gives the
 implementable pseudocode.
 
+**Revision note (post-audit).** Two changes relative to this spec are shipped, both
+documented in [statistical_review.md](statistical_review.md): (1) κ is estimated by
+bounded maximization of the exact DM marginal likelihood rather than the Minka fixed
+point of §2.1, which under-converged on flat likelihood surfaces; (2) the exact Beta
+credible intervals of §1.3 are widened by a per-(type, cut) additive regime variance
+estimated from rolling temporal holdouts — the coverage diagnostic of §7.2 exposed
+material under-coverage that parent-uncertainty propagation alone would not fix.
+Everything else (hierarchy, censoring, hygiene, evaluation design) ships as specified.
+
 ---
 
 ## 0. Notation and setup

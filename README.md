@@ -32,6 +32,9 @@ python3 -m http.server 8011 --directory web
 ## Model
 Hierarchical Dirichlet-Multinomial over 9 ordered resolution-time bins with partial
 pooling tract → NTA → borough → citywide, per complaint type. Winning config **P5a**:
-empirical-Bayes concentration per (type, level) via Minka's fixed point, exponential
-time decay (90-day half-life). Selected by lowest ranked probability score on a
-12-month-train / 5-month-test temporal holdout. See docs/ for full methodology.
+empirical-Bayes concentration per (type, level) by bounded MLE on the exact
+Dirichlet-Multinomial marginal likelihood, exponential time decay (90-day half-life),
+and 90% intervals calibrated with a per-type regime-variance component estimated from
+rolling temporal holdouts. Selected by lowest ranked probability score on a
+12-month-train / 5-month-test temporal holdout. See docs/ for full methodology and
+docs/statistical_review.md for the audit that motivated the calibration.

@@ -75,7 +75,8 @@ def ece(pred_cum: np.ndarray, hit: np.ndarray, nbins: int = 20) -> float:
 
 def evaluate_config(cfg: M.Config, train: pd.DataFrame, test: pd.DataFrame,
                     geo: M.GeoIndex, types: list[str], type_ix: dict,
-                    t_ref: pd.Timestamp, train_cell_n: pd.Series):
+                    t_ref: pd.Timestamp, train_cell_n: pd.Series,
+                    sigma24: dict | None = None):
     fm = M.fit(train, geo, types, cfg, t_ref)
     a = predictions_for(fm, geo, type_ix, test)
     y = test["bin"].to_numpy()
@@ -107,11 +108,20 @@ def evaluate_config(cfg: M.Config, train: pd.DataFrame, test: pd.DataFrame,
     res["ece_24"] = float(ece(pred_24, hit_24))
     res["ece_7d"] = float(ece(pred_7d, hit_7d))
 
-    # 90% CI coverage on P(<=24h) for cells with >=50 test obs
+    # 90% interval coverage on P(<=24h) for cells with >=50 test obs.
+    # Intervals include the additive regime variance estimated on TRAIN (as
+    # shipped), so configs are judged on the intervals users actually see.
     A = a.sum(1)
     Ac = cumulative_A(a, 2)
-    lo = beta.ppf(0.05, Ac, A - Ac)
-    hi = beta.ppf(0.95, Ac, A - Ac)
+    mid = Ac / A
+    var0 = mid * (1 - mid) / (A + 1)
+    if sigma24 is not None and cfg.hierarchy:
+        sv = np.array([sigma24.get(t, sigma24["__pooled__"]) for t in test["ctype"]])
+    else:
+        sv = np.zeros(len(test))
+    hw = 1.645 * np.sqrt(var0 + sv ** 2)
+    lo = np.clip(mid - hw, 0, 1)
+    hi = np.clip(mid + hw, 0, 1)
     tdf = pd.DataFrame({"key": cell_key, "hit24": hit_24, "lo": lo, "hi": hi})
     cov_rows = []
     for _, g in tdf.groupby("key"):
@@ -168,10 +178,18 @@ def main() -> None:
     from collections import defaultdict
     tcn = defaultdict(int, train_cell_n)
 
+    # interval calibration on TRAIN only (origins + 60d horizons all precede split)
+    origins = [str((split - pd.Timedelta(days=d)).date()) for d in (270, 210, 150, 90)]
+    sig = M.estimate_regime_sigma(train, geo, types, origins)
+    sigma24 = {t: v[1] for t, v in sig["per_type"].items()}
+    sigma24["__pooled__"] = sig["pooled"][1]
+    print(f"regime sigma (train, 24h cut): pooled={sig['pooled'][1]:.3f}", flush=True)
+
     results, rps_by_cfg, cell_keys = [], {}, None
     for cfg in M.CONFIGS:
         t0 = time.time()
-        r, rps, keys = evaluate_config(cfg, train, test, geo, types, type_ix, t_ref, tcn)
+        r, rps, keys = evaluate_config(cfg, train, test, geo, types, type_ix, t_ref, tcn,
+                                       sigma24=sigma24)
         results.append(r)
         rps_by_cfg[cfg.name] = rps
         cell_keys = keys
