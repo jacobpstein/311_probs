@@ -1,11 +1,6 @@
 # Methods — How Fast Does New York Fix It?
 
-**A layered explainer.** This document is written to be read two ways. The **plain-language
-boxes** (marked *In plain English*) tell the whole story with no math or jargon — read only
-those and you'll understand exactly what the map shows and how far to trust it. The material
-between the boxes fills in the statistical detail for readers who want to check the work.
-
-A one-paragraph summary of everything below:
+The whole method in one paragraph:
 
 > We took roughly five million 311 service requests, measured how long each one took to
 > close, and sorted those durations into nine buckets (under 3 hours, same day, next day,
@@ -20,7 +15,7 @@ A one-paragraph summary of everything below:
 
 ## 1. What question the map answers
 
-> **In plain English.** Pick a spot on the map and a type of problem — say, a noise
+> Pick a spot on the map and a type of problem — say, a noise
 > complaint in your census tract. The map tells you: *if someone files this complaint here,
 > what's the chance the city resolves it within 3 hours? Within a day? Within a week? A
 > month?* It's a weather forecast for city services: not a promise, but the odds, based on
@@ -54,7 +49,7 @@ still leaves enough data per unit to say something meaningful.
 
 ## 2. The data
 
-> **In plain English.** We used the city's own public record of every 311 request —
+> We used the city's own public record of every 311 request —
 > including when it was opened, when it was closed, what it was about, and where it was.
 > We only kept requests old enough that we could actually see their full outcome, and we
 > cleaned out obvious data-entry glitches (duplicates, negative durations, and so on).
@@ -76,7 +71,7 @@ level, where they still inform the estimates.
 
 ### 2.1 Cleaning ("data hygiene")
 
-> **In plain English.** Raw government data always has junk in it — the same request entered
+> Raw government data always has junk in it — the same request entered
 > twice, a "closed" date that's somehow before the "opened" date, bulk closures where an
 > agency shut thousands of cases in the same minute. We remove the clearly broken records
 > and flag the suspicious-but-real ones, and we keep a running tally so anyone can see
@@ -104,7 +99,7 @@ exact-zero durations, and ~85k batch-closure flags. The full table is in
 
 ### 2.2 Right-censoring: only judging requests old enough to have an outcome
 
-> **In plain English.** If a request was filed three days ago, we can't yet know whether it
+> If a request was filed three days ago, we can't yet know whether it
 > will be resolved "within a month" — it simply hasn't had the chance. Counting recent,
 > still-open requests would make the city look slower than it is. So we only use requests
 > filed at least 31 days before we pulled the data. For those, if it's still open, we know
@@ -129,7 +124,7 @@ track it: any complaint type where more than 20% of matured requests are still o
 
 ## 3. Turning counts into probabilities — the intuition
 
-> **In plain English.** The naïve way to estimate "chance a noise complaint here is resolved
+> The naïve way to estimate "chance a noise complaint here is resolved
 > same-day" is to look at past noise complaints on that block and compute the fraction that
 > were. That works great on a busy block with thousands of complaints. But on a quiet block
 > with three complaints, "2 out of 3 = 67%" is basically noise — flip one case and it's 33%.
@@ -145,7 +140,7 @@ update as new data arrives**.
 
 ## 4. The model
 
-> **In plain English.** Think of it as a family tree. The whole city has an average pattern
+> Think of it as a family tree. The whole city has an average pattern
 > for, say, heat complaints. Each borough is a variation on the city's pattern; each
 > neighborhood a variation on its borough's; each block a variation on its neighborhood's.
 > A block with little data mostly inherits its neighborhood's pattern; a block with lots of
@@ -167,7 +162,7 @@ seconds on a laptop and updates cheaply; (3) every quantity the interface needs 
 uncertainty intervals, a shrinkage indicator) falls out analytically. Alternatives are
 discussed and rejected in [model_spec.md §1](model_spec.md).
 
-### 4.2 The generative story (technical)
+### 4.2 The generative story
 
 For a fixed complaint type, with concentration parameters κ at each level:
 
@@ -184,7 +179,7 @@ shrunk toward its neighborhood's *heat* pattern, not toward its own all-complain
 because resolution speed is driven far more by what the complaint is (which agency owns it,
 what the legal response window is) than by where it is.
 
-### 4.3 How an estimate is computed (technical)
+### 4.3 How an estimate is computed
 
 We use the standard top-down **conjugate cascade**: each node's posterior is a Dirichlet
 whose parameters are its parent's posterior *mean* (scaled by κ) plus the node's own counts.
@@ -203,12 +198,12 @@ Everything the app shows is then closed-form from `a_tract` (with `A = Σ a`):
 - **Shrinkage weight** `λ = n / (n + κ₃)` ∈ [0, 1]: the share of the estimate that comes
   from *this tract's own data* versus the borrowed neighborhood pattern.
 
-> **In plain English.** That last number, λ, is what powers the "data strength" dots in the
+> That last number, λ, is what powers the "data strength" dots in the
 > app. λ near 1 ("Strong local data," ●●●) means the estimate is essentially this tract's own
 > record. λ near 0 ("Limited"/"No local data," ○○○, shown with a "~" and a wider faded range)
 > means you're mostly looking at the neighborhood, honestly labeled as such.
 
-### 4.4 How much to blend: learning κ from the data (technical)
+### 4.4 How much to blend: learning κ from the data
 
 The concentration parameters κ decide *how strongly* a child is pulled toward its parent — in
 plain terms, "how many requests' worth of belief" the parent's pattern is worth before local
@@ -239,7 +234,7 @@ diagnostics ever demand it (§6 shows they didn't warrant it here).
 
 ## 5. Keeping estimates fresh — time decay and updating
 
-> **In plain English.** The city changes: agencies get faster or slower, policies shift,
+> The city changes: agencies get faster or slower, policies shift,
 > seasons turn. So we let recent requests count for more than old ones — a request from last
 > month carries more weight than one from a year ago. And when a new month of data arrives,
 > we don't refit from scratch; we gently "age" the existing counts and add the new ones. Today's
@@ -249,7 +244,7 @@ diagnostics ever demand it (§6 shows they didn't warrant it here).
 (a request 90 days old counts half as much as a brand-new one). This value was chosen
 empirically (§6), not by hand.
 
-**Incremental update (technical).** Because matured requests never change bins (§2.2), updating
+**Incremental update.** Because matured requests never change bins (§2.2), updating
 is a single conjugate step — "decay-then-add":
 
 ```
@@ -265,7 +260,7 @@ label it as such rather than overselling it as exact dynamic Bayes. The recipe l
 
 ## 6. How we know it works — testing the priors
 
-> **In plain English.** We didn't just pick a method and hope. We built eight versions —
+> We didn't just pick a method and hope. We built eight versions —
 > from a dumb baseline that ignores the neighborhood entirely, up to the full model with
 > learned blending and time decay — and staged a fair contest: train each on the first year
 > of data, then see which best predicts what *actually* happened in the following five months,
@@ -297,7 +292,7 @@ Uncertainty on the comparison comes from a **block bootstrap over cells**.
 | + time decay, 180-day half-life | 0.1067 | +0.0003 |
 | + time decay, 365-day half-life | 0.1068 | +0.0004 |
 
-> **In plain English.** The two things that mattered most: (1) letting thin blocks borrow
+> The two things that mattered most: (1) letting thin blocks borrow
 > from their neighborhood — the no-pooling baselines are visibly worse, and on blocks the
 > model had never seen they collapse to a useless "all outcomes equally likely" guess, while
 > the hierarchy still gives a sensible neighborhood-based answer; (2) weighting recent data
@@ -310,7 +305,7 @@ back to the neighborhood. That gap is the entire value proposition of the method
 
 ### 6.1 Where the model is weakest (stated plainly)
 
-> **In plain English.** Two honest caveats. First, the city genuinely got a bit faster or
+> Two honest caveats. First, the city genuinely got a bit faster or
 > slower at some things between 2025 and 2026, so on the busiest blocks — where our
 > confidence intervals are very tight — the real 2026 rate sometimes drifts outside them.
 > That's not the model being overconfident about randomness; it's the world actually
