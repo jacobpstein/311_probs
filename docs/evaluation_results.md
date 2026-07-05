@@ -170,3 +170,14 @@ _Generated 2026-07-05. Train 2025-01-01–2026-01-01 (3,422,381 requests), test 
 Jeffreys ½), κ per (type, level) by bounded MLE on the DM marginal likelihood,
 90-day exponential decay, regime-calibrated 90% intervals. Fit on all matured data
 through 2026-06-03.
+- **Seasonal blending tested, not adopted.** A same-season-last-year kernel
+  (row weight = recency + β·2^(−|age−1yr|/bw); conjugate, available via
+  `Config.seasonal_beta`) was evaluated with a rolling-monthly protocol that mirrors
+  the deployed refresh: refit at each 2026 month start, predict that month. Overall
+  paired RPS difference vs P5a: −0.00001 ± 0.00008 (β=0.5, bw=45d) — a statistical
+  zero — with heavier blends slightly worse (+0.00014 ± 0.00013 at β=1.0), and gains
+  on strongly seasonal types (Heat/Hot Water, Snow or Ice, Plumbing, Water System)
+  of only ~0.3% relative and inconsistent by month. With one prior year of history,
+  "last season" is a single noisy replicate carrying that year's idiosyncrasies,
+  while the 90-day recency window already captures mid-season behavior. Re-test with
+  ≥2 years of history (`pipeline/eval_seasonal.py`).

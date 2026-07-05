@@ -28,6 +28,8 @@ class Config:
     fixed_kappa: float = 15.0
     flat_alpha: float = 1.0             # used only when hierarchy=False
     half_life_days: float | None = None
+    seasonal_beta: float = 0.0          # weight of same-season-last-year kernel
+    seasonal_bw_days: float = 45.0      # kernel half-life around age = 1 year
 
 
 CONFIGS = [
@@ -63,8 +65,14 @@ def collapse_types(s: pd.Series, top_types: list[str]) -> pd.Series:
 
 
 def count_tensors(df: pd.DataFrame, geo: GeoIndex, types: list[str],
-                  t_ref: pd.Timestamp, half_life_days: float | None):
+                  t_ref: pd.Timestamp, half_life_days: float | None,
+                  seasonal_beta: float = 0.0, seasonal_bw_days: float = 45.0):
     """Decayed count tensors (nodes x T+1 x K) at each level; last type slot = ALL.
+
+    Row weight = recency kernel 2^(-age/half_life) plus, when seasonal_beta > 0, a
+    same-season kernel seasonal_beta * 2^(-|age - 365.25d| / seasonal_bw_days) that
+    up-weights data from the matching season one year earlier (still one weighted
+    count vector per row, so conjugacy is untouched).
 
     Rows without a tract (geoid NaN) contribute only to borough/city tensors
     (model_spec §6.7). Also returns raw (undecayed) tract counts for diagnostics.
@@ -73,11 +81,13 @@ def count_tensors(df: pd.DataFrame, geo: GeoIndex, types: list[str],
     type_ix = pd.Series(range(T), index=types)
     t = df["ctype"].map(type_ix).to_numpy()
     b = df["bin"].to_numpy()
+    age_d = (t_ref - df["created_date"]).dt.total_seconds().to_numpy() / 86400.0
     if half_life_days is None:
         w = np.ones(len(df))
     else:
-        age_d = (t_ref - df["created_date"]).dt.total_seconds().to_numpy() / 86400.0
         w = np.exp2(-age_d / half_life_days)
+    if seasonal_beta > 0:
+        w = w + seasonal_beta * np.exp2(-np.abs(age_d - 365.25) / seasonal_bw_days)
 
     def accumulate(node_idx: np.ndarray, n_nodes: int, mask: np.ndarray, weights) -> np.ndarray:
         out = np.zeros((n_nodes, T + 1, K))
@@ -260,7 +270,8 @@ def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
     (the §8 incremental-update path re-runs the cascade with the stored kappa table).
     """
     C_tract, C_nta, C_boro, C_city, R_tract = count_tensors(
-        df, geo, types, t_ref, cfg.half_life_days)
+        df, geo, types, t_ref, cfg.half_life_days,
+        cfg.seasonal_beta, cfg.seasonal_bw_days)
     T = len(types)
 
     if not cfg.hierarchy:
