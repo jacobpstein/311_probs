@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>How Fast Does New York Fix It?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<link href="style.css" rel="stylesheet" />
+</head>
+<body>
+<div id="map"></div>
+
+<!-- Loading overlay -->
+<div id="loading"><div class="spinner"></div><div>Loading 2,300 census tracts…</div></div>
+
+<!-- Header card -->
+<header id="header" class="card">
+  <button id="header-collapse" class="chevron" aria-label="Collapse panel">▾</button>
+  <h1>How Fast Does New York Fix It?</h1>
+  <p class="subtitle">Tap any census tract to see the odds a 311 request gets resolved — in hours, days, or a month — based on millions of real service requests.</p>
+  <div class="search-wrap">
+    <input id="search" type="text" placeholder="Search an address or neighborhood…" autocomplete="off" />
+    <div id="search-results"></div>
+  </div>
+  <div class="boro-row">
+    <button data-boro="All NYC" class="boro-btn active">All NYC</button>
+    <button data-boro="Manhattan" class="boro-btn">Manhattan</button>
+    <button data-boro="Bronx" class="boro-btn">Bronx</button>
+    <button data-boro="Brooklyn" class="boro-btn">Brooklyn</button>
+    <button data-boro="Queens" class="boro-btn">Queens</button>
+    <button data-boro="Staten Island" class="boro-btn">Staten Island</button>
+  </div>
+</header>
+
+<!-- Pre-selection hint -->
+<div id="hint">Click any tract to see its resolution odds.</div>
+
+<!-- Legend -->
+<div id="legend" class="card">
+  <div id="legend-caption">Chance a 311 request is resolved within 24 hours</div>
+  <div class="legend-swatches" id="legend-swatches"></div>
+  <div class="legend-ends"><span>0%</span><span>50%</span><span>100%</span></div>
+</div>
+
+<!-- Time scrubber -->
+<div id="scrubber" class="card" role="radiogroup" aria-label="Resolution time threshold">
+  <button id="play" aria-label="Play the resolution timeline">▶</button>
+  <div id="scrub-segments"></div>
+</div>
+
+<!-- Side panel -->
+<aside id="panel" class="card" aria-hidden="true">
+  <button id="panel-close" aria-label="Close">×</button>
+  <div id="panel-head">
+    <h2 id="tract-name">—</h2>
+    <div id="tract-nta" class="sub"></div>
+    <div id="tract-meta" class="meta"></div>
+  </div>
+  <div class="divider"></div>
+
+  <div class="section-label">COMPLAINT TYPE</div>
+  <div id="chips" class="chips"></div>
+
+  <div id="zero-banner" class="zero-banner" hidden></div>
+
+  <div id="stat-card" class="stat-card">
+    <div class="stat-left">
+      <div id="stat-number">—</div>
+      <div id="stat-caption" class="stat-caption">chance it's resolved within 24 hours</div>
+    </div>
+    <div class="stat-right">
+      <div id="strength-dots" class="dots" title=""></div>
+      <div id="strength-label" class="strength-label"></div>
+    </div>
+  </div>
+
+  <div class="section-label">HOW LONG UNTIL IT'S RESOLVED?</div>
+  <div id="ladder" class="ladder"></div>
+  <div class="ladder-foot">Faded bar ends show the plausible range for each estimate.</div>
+
+  <div class="section-label">COMPARED TO</div>
+  <div id="compare" class="compare"></div>
+
+  <details id="methods">
+    <summary>How we estimate this</summary>
+    <p>Every dot on this map starts with real 311 requests and how long each one took to close. Because some tracts have thousands of requests and others only a handful, we use a statistical model that lets small tracts borrow strength from their neighborhood and borough — so a quiet block still gets a fair estimate instead of a noisy one. The faded ends of each bar show the plausible range: the less local data, the wider the range. Resolution times come from the city's own records of when requests were closed.</p>
+    <p class="fine">Data: NYC Open Data, 311 Service Requests · Model: Bayesian hierarchical (tract → neighborhood → borough) · Not affiliated with the City of New York.</p>
+  </details>
+</aside>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

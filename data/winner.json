@@ -1,0 +1,26 @@
+{
+  "best": "P5a P4 + decay h=90d",
+  "types": [
+    "Illegal Parking",
+    "Noise - Residential",
+    "HEAT/HOT WATER",
+    "Blocked Driveway",
+    "Noise - Street/Sidewalk",
+    "UNSANITARY CONDITION",
+    "Abandoned Vehicle",
+    "Street Condition",
+    "PLUMBING",
+    "Noise - Commercial",
+    "Dirty Condition",
+    "Water System",
+    "Noise",
+    "PAINT/PLASTER",
+    "Encampment",
+    "Traffic Signal Condition",
+    "Missed Collection",
+    "DOOR/WINDOW",
+    "Derelict Vehicles",
+    "Noise - Vehicle",
+    "Other"
+  ]
+}

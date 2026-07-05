@@ -1,0 +1,21 @@
+{
+  "raw rows": 5338189,
+  "after unique_key dedupe": 5338189,
+  "after double-submission collapse": 5150145,
+  "after created_date parse": 5150145,
+  "closed_status_null_closed_date_dropped": 6028,
+  "after closed-but-no-closed_date drop": 5144117,
+  "after negative-duration drop": 5143159,
+  "exact_zero_duration_dropped": 97352,
+  "after zero-duration drop": 5045807,
+  "sub_minute_by_type_top": {
+    "Noise - Residential": 2171,
+    "Illegal Parking": 1948,
+    "Drug Activity": 766,
+    "Noise - Street/Sidewalk": 598,
+    "Traffic": 448
+  },
+  "batch_closed_flagged": 84563,
+  "tract_assigned": 4960076,
+  "after geography filter": 5041962
+}
