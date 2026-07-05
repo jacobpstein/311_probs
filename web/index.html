@@ -33,6 +33,10 @@
     <button data-boro="Queens" class="boro-btn">Queens</button>
     <button data-boro="Staten Island" class="boro-btn">Staten Island</button>
   </div>
+  <div class="type-row">
+    <div class="section-label">COMPLAINT TYPE</div>
+    <div id="header-chips" class="chips"></div>
+  </div>
 </header>
 
 <!-- Pre-selection hint -->
@@ -42,7 +46,12 @@
 <div id="legend" class="card">
   <div id="legend-caption">Chance a 311 request is resolved within 24 hours</div>
   <div class="legend-swatches" id="legend-swatches"></div>
-  <div class="legend-ends"><span>0%</span><span>50%</span><span>100%</span></div>
+  <div class="legend-ends"><span id="legend-lo">0%</span><span id="legend-mid">50%</span><span id="legend-hi">100%</span></div>
+  <div class="legend-toggle" role="radiogroup" aria-label="Color shading">
+    <button data-shade="absolute" class="active" role="radio" aria-checked="true">Absolute</button>
+    <button data-shade="relative" role="radio" aria-checked="false">Relative</button>
+    <span class="legend-toggle-help" title="Absolute shades 0–100%. Relative stretches the colors across only the values in view, revealing variation for types that cluster in a narrow band.">?</span>
+  </div>
 </div>
 
 <!-- Time scrubber -->

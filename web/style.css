@@ -50,6 +50,19 @@ html,body { margin:0; height:100%; background:var(--bg-0); color:var(--text-1);
 .boro-btn:hover { color:var(--text-1); }
 .boro-btn.active { color:var(--accent); border-bottom:2px solid var(--accent); padding-bottom:2px; }
 
+.type-row { margin-top:14px; border-top:1px solid var(--line); padding-top:12px; }
+.type-row .section-label { margin:0 0 8px; }
+#header-chips { max-height:76px; overflow-y:auto; }
+
+#legend .legend-toggle { display:flex; align-items:center; gap:4px; margin-top:10px;
+  border-top:1px solid var(--line); padding-top:9px; }
+#legend .legend-toggle button { flex:1; background:var(--bg-2); border:1px solid var(--line);
+  color:var(--text-2); font-family:var(--sans); font-size:11px; font-weight:500; padding:4px 0;
+  border-radius:6px; cursor:pointer; }
+#legend .legend-toggle button.active { border-color:var(--accent); background:var(--accent-soft); color:var(--text-1); }
+.legend-toggle-help { width:16px; height:16px; flex:none; border-radius:50%; background:var(--bg-2);
+  color:var(--text-3); font-size:10px; line-height:16px; text-align:center; cursor:help; }
+
 #hint { position:fixed; right:24px; top:50%; transform:translateY(-50%); z-index:15;
   color:var(--text-3); font-size:14px; max-width:180px; text-align:center; pointer-events:none;
   transition:opacity .3s ease; }

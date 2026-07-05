@@ -34,8 +34,15 @@ const BORO_BOUNDS = {
   'All NYC': NYC_BOUNDS,
 };
 
-const state = { meta: null, probs: null, geo: null, bboxes: {},
-  type: 'ALL', thr: 1, selected: null, playing: false, playTimer: null };
+const state = { meta: null, probs: null, geo: null, bboxes: {}, boroOf: {},
+  type: 'ALL', thr: 1, selected: null, playing: false, playTimer: null,
+  shading: 'absolute', boro: 'All NYC' };
+
+function percentile(sorted, q) {
+  if (!sorted.length) return 0;
+  const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
 
 function classColor(p) {
   if (p == null || isNaN(p)) return NO_DATA;
@@ -78,7 +85,10 @@ async function boot() {
     fetch('data/tracts.geojson').then(r => r.json()),
   ]);
   state.meta = meta; state.probs = probs; state.geo = geo;
-  for (const f of geo.features) state.bboxes[f.properties.geoid] = bbox(f.geometry);
+  for (const f of geo.features) {
+    state.bboxes[f.properties.geoid] = bbox(f.geometry);
+    state.boroOf[f.properties.geoid] = f.properties.boro;
+  }
 
   // Wait for the style spec to be *parsed* (what addSource needs) — not for all
   // basemap tiles to finish, which isStyleLoaded()/load require and which can stay
@@ -146,10 +156,37 @@ function paintMap() {
 }
 function applyFeatureStates() {
   const cIdx = THRESHOLDS[state.thr].cum;
+  // raw cumulative "within X" per tract for the current type
+  const raw = {};
   for (const geoid in state.probs) {
     const c = cell(geoid, state.type);
-    const p = c ? cumsum(c.bp)[cIdx] : null;
-    map.setFeatureState({ source: 'tracts', id: geoid }, { p: p == null ? null : p });
+    raw[geoid] = c ? cumsum(c.bp)[cIdx] : null;
+  }
+
+  // In relative mode, stretch the ramp across the values in the current view
+  // (the focused borough, or the whole city) so within-type variation is visible.
+  let lo = 0, hi = 1;
+  if (state.shading === 'relative') {
+    const scope = [];
+    for (const geoid in raw) {
+      if (raw[geoid] == null) continue;
+      if (state.boro !== 'All NYC' && state.boroOf[geoid] !== state.boro) continue;
+      scope.push(raw[geoid]);
+    }
+    scope.sort((a, b) => a - b);
+    lo = percentile(scope, 0.02);
+    hi = percentile(scope, 0.98);
+    if (hi - lo < 0.01) hi = lo + 0.01;  // avoid divide-by-zero on uniform types
+  }
+  state.viewRange = { lo, hi };
+  updateLegendRange();
+
+  const span = hi - lo;
+  for (const geoid in raw) {
+    const r = raw[geoid];
+    const shown = r == null ? null
+      : state.shading === 'relative' ? Math.max(0, Math.min(1, (r - lo) / span)) : r;
+    map.setFeatureState({ source: 'tracts', id: geoid }, { p: shown });
   }
 }
 
@@ -193,11 +230,21 @@ function buildLegend() {
 function typeCaption() {
   const t = state.type;
   if (t === 'ALL') return 'a 311 request';
-  return 'a ' + t.toLowerCase().replace('heat/hot water', 'heat/hot-water') + ' request';
+  const name = t.toLowerCase().replace('heat/hot water', 'heat/hot-water');
+  const article = /^[aeiou]/.test(name) ? 'an' : 'a';
+  return `${article} ${name} request`;
 }
 function updateLegendCaption() {
+  const suffix = state.shading === 'relative' ? ' — colors stretched to this view' : '';
   document.getElementById('legend-caption').textContent =
-    `Chance ${typeCaption()} is resolved within ${THRESHOLDS[state.thr].long}`;
+    `Chance ${typeCaption()} is resolved within ${THRESHOLDS[state.thr].long}${suffix}`;
+}
+function updateLegendRange() {
+  const [lo, mid, hi] = ['legend-lo', 'legend-mid', 'legend-hi'].map(id => document.getElementById(id));
+  if (state.shading === 'relative' && state.viewRange) {
+    const { lo: a, hi: b } = state.viewRange;
+    lo.textContent = pct(a); mid.textContent = pct((a + b) / 2); hi.textContent = pct(b);
+  } else { lo.textContent = '0%'; mid.textContent = '50%'; hi.textContent = '100%'; }
 }
 
 /* ---------------- Chips ---------------- */
@@ -209,17 +256,20 @@ function nice(t) {
     .join(' ').replace('Heat/hot', 'Heat/Hot');
 }
 function buildChips() {
-  const wrap = document.getElementById('chips');
+  ['header-chips', 'chips'].forEach(id => buildChipRow(document.getElementById(id)));
+  syncChips();
+}
+function buildChipRow(wrap) {
   wrap.innerHTML = '';
   const shown = COMMON.filter(t => state.meta.types.includes(t));
   const rest = state.meta.types.filter(t => !shown.includes(t));
   shown.forEach(t => wrap.appendChild(makeChip(t)));
   if (rest.length) {
     const more = document.createElement('select');
-    more.className = 'chip'; more.style.appearance = 'none';
+    more.className = 'chip more-select'; more.style.appearance = 'none';
     more.innerHTML = '<option value="">More ▾</option>' +
       rest.map(t => `<option value="${t}">${nice(t)}</option>`).join('');
-    more.onchange = () => { if (more.value) setType(more.value); more.selectedIndex = 0; };
+    more.onchange = () => { if (more.value) setType(more.value); };
     wrap.appendChild(more);
   }
 }
@@ -230,10 +280,18 @@ function makeChip(t) {
   c.setAttribute('role', 'radio'); c.onclick = () => setType(t);
   return c;
 }
+function syncChips() {
+  document.querySelectorAll('.chip[data-type]').forEach(c =>
+    c.classList.toggle('active', c.dataset.type === state.type));
+  const isRest = !COMMON.includes(state.type);
+  document.querySelectorAll('.more-select').forEach(s => {
+    s.value = isRest ? state.type : '';
+    s.classList.toggle('active', isRest);
+  });
+}
 function setType(t) {
   state.type = t;
-  document.querySelectorAll('.chip[data-type]').forEach(c =>
-    c.classList.toggle('active', c.dataset.type === t));
+  syncChips();
   paintMap();
   if (state.selected) renderPanel(state.selected);
   pushURL();
@@ -440,7 +498,16 @@ function wireInteractions() {
   document.querySelectorAll('.boro-btn').forEach(b => b.onclick = () => {
     document.querySelectorAll('.boro-btn').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
-    map.fitBounds(BORO_BOUNDS[b.dataset.boro], { padding: 40, duration: 900 });
+    state.boro = b.dataset.boro;
+    map.fitBounds(BORO_BOUNDS[state.boro], { padding: 40, duration: 900 });
+    if (state.shading === 'relative') paintMap();  // re-stretch to the focused borough
+  });
+  document.querySelectorAll('.legend-toggle button').forEach(b => b.onclick = () => {
+    state.shading = b.dataset.shade;
+    document.querySelectorAll('.legend-toggle button').forEach(x => {
+      const on = x === b; x.classList.toggle('active', on); x.setAttribute('aria-checked', on);
+    });
+    paintMap();
   });
   document.getElementById('play').onclick = togglePlay;
   wireSearch();

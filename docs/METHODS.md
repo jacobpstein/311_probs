@@ -344,6 +344,35 @@ Every per-tract record exported to the browser
 interval bounds, the raw observation count, and the shrinkage weight, so nothing on screen is
 computed in a way the data can't back up.
 
+### 7.1 Why some maps look nearly uniform — and the two shading modes
+
+> A lot of complaint types resolve at roughly the same speed everywhere in the city, so their
+> maps look almost one color. That's usually real, not a glitch: things like illegal parking,
+> missed collections, or traffic-signal repairs run on citywide agency schedules, so where you
+> are barely matters. Other types — heat, sanitation — genuinely differ block to block. The
+> "Absolute / Relative" switch lets you see both stories.
+
+This is worth stating plainly because it's easy to misread. For high-volume, agency-scheduled
+types the tract-to-tract spread in the *raw* data is tiny — e.g., the middle 50% of Brooklyn
+tracts differ in their "resolved within 24h" rate for illegal parking by well under one
+percentage point — and the model faithfully reports that near-uniformity rather than
+inventing variation. The empirical-Bayes concentration for such types is correspondingly
+large (strong pooling), which the evaluation confirms is the right call. Types with genuine
+local structure (Heat/Hot Water, Dirty Condition) keep a visibly wider spread.
+
+Two consequences for reading the map:
+
+- **Absolute shading** (default) colors every tract on a fixed 0–100% scale. Colors mean the
+  same thing across every complaint type and time threshold — essential for honest comparison
+  and for the play-button animation — but a type whose values all sit in a narrow band (say
+  96–100%) shows as one color.
+- **Relative shading** stretches the color ramp across only the values currently in view (the
+  focused borough, or the whole city). This surfaces the real-but-small variation that the
+  absolute scale flattens — which tracts are the local outliers — while the legend always
+  prints the actual numeric range (e.g., "96%–100%"), so a stretched-out 4-point spread can
+  never be mistaken for a dramatic one. The underlying probabilities and the tract panel are
+  identical in both modes; only the color mapping changes.
+
 ---
 
 ## 8. Reproducing this
