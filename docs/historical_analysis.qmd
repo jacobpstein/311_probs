@@ -1,0 +1,563 @@
+---
+title: "Sixteen Years of 311: How Resolution Odds Changed Across Administrations"
+subtitle: >
+  Recorded resolution-time probabilities for NYC 311 service requests, 2010–2026,
+  compared across mayoral administrations — citywide, by complaint type, and within
+  individual census tracts.
+date: today
+format:
+  html:
+    theme: darkly
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    code-tools: true
+    embed-resources: true
+    fig-dpi: 150
+execute:
+  warning: false
+  echo: true
+jupyter: python3
+---
+
+::: {.callout-note title="How to read this document"}
+Plain-language takeaways open each section; the code that produced every number and
+figure is folded beneath it (click "Code"). To reproduce: run the pipeline in
+`pipeline/` (`fetch_311.py`, `fetch_311_history.py`, `prepare.py`, `prepare_hist.py`),
+then render this file with `quarto render docs/historical_analysis.qmd`.
+:::
+
+## Summary
+
+This analysis asks how the *recorded* probability that a 311 request gets resolved —
+within 3 hours, within a day, within a week — has moved since 2010, and whether
+different mayoral administrations are associated with different odds **in the same
+census tract**. Three design choices matter throughout:
+
+1. **Within-type comparisons.** What New Yorkers report changed enormously (the 311
+   app made noise complaints explode), and complaint types resolve at wildly different
+   speeds. Comparing administrations on the all-complaints average mostly measures
+   this composition shift, so every comparison here is within a complaint type.
+2. **Recorded, not necessarily real.** A "resolution" is the city closing the ticket.
+   Closure practices (batch purges, auto-close policies) changed across eras; we flag
+   and quantify these artifacts rather than pretend they don't exist.
+3. **COVID is its own era.** March 2020 – December 2021 is a structural break and is
+   never averaged into an administration's record.
+
+```{python}
+#| label: setup
+#| code-summary: "Setup: load 16 years of cleaned requests, define eras"
+import glob, json, os, sys
+import numpy as np
+import pandas as pd
+import matplotlib
+import matplotlib.pyplot as plt
+
+ROOT = ".." if os.path.basename(os.getcwd()) == "docs" else "."
+sys.path.insert(0, os.path.join(ROOT, "pipeline"))
+import model as M
+
+ERAS = [
+    ("bloomberg", "Bloomberg (final term)", "2010-01-01", "2014-01-01"),
+    ("deblasio",  "de Blasio (pre-COVID)",  "2014-01-01", "2020-03-01"),
+    ("covid",     "COVID emergency",        "2020-03-01", "2022-01-01"),
+    ("adams",     "Adams",                  "2022-01-01", "2026-01-01"),
+    ("current",   "2026 administration",    "2026-01-01", "2027-01-01"),
+]
+ERA_LABEL = {k: lb for k, lb, *_ in ERAS}
+
+# conservative 1:1 taxonomy renames across the study period
+RENAMES = {"HEATING": "HEAT/HOT WATER", "PAINT - PLASTER": "PAINT/PLASTER",
+           "NONCONST": "UNSANITARY CONDITION", "Sewer Maintenance": "Sewer"}
+
+parts = sorted(glob.glob(os.path.join(ROOT, "data", "prepared_hist", "year=*.parquet")))
+df = pd.concat([pd.read_parquet(p) for p in parts]
+               + [pd.read_parquet(os.path.join(ROOT, "data", "prepared.parquet"))],
+               ignore_index=True)
+df["created_date"] = pd.to_datetime(df["created_date"])
+for c in ["geoid", "nta", "boro", "complaint_type"]:
+    df[c] = df[c].astype(str)
+df.loc[df["geoid"].isin(["nan", "None", "<NA>"]), "geoid"] = np.nan
+df["complaint_type"] = df["complaint_type"].replace(RENAMES)
+df["era"] = pd.cut(df["created_date"],
+                   bins=[pd.Timestamp(s) for _, _, s, _ in ERAS] + [pd.Timestamp(ERAS[-1][3])],
+                   labels=[k for k, *_ in ERAS], right=False)
+df = df[df["era"].notna()]
+df["year"] = df["created_date"].dt.year
+N_TOTAL = len(df)
+SPAN = (df["created_date"].min().date(), df["created_date"].max().date())
+era_keys = [k for k, *_ in ERAS if (df["era"] == k).any()]   # eras with data present
+
+# dark theme to match the map app
+C = {"bg": "#0B0E14", "text": "#F2F4F8", "sub": "#9AA3B5", "line": "#2A3244",
+     "accent": "#FFB84D"}
+plt.rcParams.update({
+    "figure.facecolor": C["bg"], "axes.facecolor": C["bg"], "savefig.facecolor": C["bg"],
+    "axes.edgecolor": C["line"], "axes.labelcolor": C["sub"], "text.color": C["text"],
+    "xtick.color": C["sub"], "ytick.color": C["sub"], "axes.grid": True,
+    "grid.color": C["line"], "grid.linewidth": 0.5, "font.size": 11})
+```
+
+The analysis covers **`{python} f"{N_TOTAL:,}"`** cleaned, matured service requests
+created between `{python} str(SPAN[0])` and `{python} str(SPAN[1])`, all passed
+through the identical hygiene rules as the live map (de-duplication, double-submission
+collapse, negative/zero-duration removal, batch-closure flagging, point-in-polygon
+assignment to 2020 census tracts — see `docs/METHODS.md`).
+
+## The data changed as much as the city did
+
+Before comparing administrations, look at what the instrument itself was doing.
+Request volume roughly doubled; the complaint mix transformed; geocoding quality
+improved; and the share of requests never administratively closed varies by era.
+Every one of these can masquerade as a "service change."
+
+```{python}
+#| label: artifacts
+#| code-summary: "Era context table: volume, composition, artifact rates"
+rows = []
+for key, label, s, e in ERAS:
+    sub = df[df["era"] == key]
+    if len(sub) == 0:
+        continue
+    yrs = max((pd.Timestamp(e) - pd.Timestamp(s)).days / 365.25, 5 / 12)
+    top3 = sub["complaint_type"].value_counts(normalize=True).head(3)
+    rows.append({
+        "era": label,
+        "requests/yr (M)": round(len(sub) / yrs / 1e6, 2),
+        "share never closed": f'{(sub["bin"].eq(M.K - 1) & 1).mean():.1%}',
+        "batch-closure flagged": f'{sub["batch_closed"].mean():.1%}',
+        "tract-geocoded": f'{sub["geoid"].notna().mean():.1%}',
+        "top complaint (share)": f"{top3.index[0].title()} ({top3.iloc[0]:.0%})",
+    })
+pd.DataFrame(rows).set_index("era")
+```
+
+::: {.callout-warning title="What this table means for interpretation"}
+The comparisons below are of **recorded closures under each era's record-keeping
+practices**. Where an era's batch-closure or never-closed rates stand out, treat its
+differences as partly administrative. Tract geocoding also improves over time; rows
+without coordinates still inform borough and citywide estimates but not tract-level
+ones.
+:::
+
+```{python}
+#| label: stable-types
+#| code-summary: "Select complaint types comparable across all five eras"
+MIN_PER_ERA = 15_000
+vol = df.groupby(["complaint_type", "era"], observed=True).size().unstack("era", fill_value=0)
+stable = vol[(vol >= MIN_PER_ERA).all(axis=1)].sort_values("adams", ascending=False)
+TYPES = stable.index.tolist()
+```
+
+Cross-era comparisons use the **`{python} len(TYPES)`** complaint types that appear
+with meaningful volume (≥15,000 requests) in *every* era, after normalizing known
+renames (e.g., pre-2014 "HEATING" is today's "Heat/Hot Water"):
+`{python} ", ".join(t.title() for t in TYPES)`.
+
+## The long view: same-day resolution, 2010–2026
+
+```{python}
+#| label: fig-annual
+#| fig-cap: "Share of requests resolved within 24 hours, by year. Vertical lines mark administration changes; the dashed span is the COVID emergency period."
+#| code-summary: "Annual P(resolved ≤ 24h) by complaint type"
+fig, ax = plt.subplots(figsize=(11, 6))
+palette = ["#FFB84D", "#7AD151", "#2A788E", "#BDDF26", "#F5A97F", "#43D9A3",
+           "#7AA7FF", "#D183C9"]
+sel = ["ALL"] + TYPES[:6]
+for i, t in enumerate(sel):
+    sub = df if t == "ALL" else df[df["complaint_type"] == t]
+    ann = sub.groupby("year")["bin"].apply(lambda s: (s <= 1).mean())
+    ax.plot(ann.index, ann.values, color=palette[i % len(palette)],
+            lw=2.6 if t == "ALL" else 1.4, alpha=1 if t == "ALL" else .9,
+            label="All complaints" if t == "ALL" else t.title())
+for x in [2014, 2022, 2026]:
+    ax.axvline(x - .5, color=C["line"], lw=1)
+ax.axvspan(2020.17, 2022 - .5, color="#FFFFFF", alpha=.045)
+for x, name in [(2011.5, "Bloomberg"), (2017, "de Blasio"), (2020.9, "COVID"),
+                (2023.7, "Adams"), (2026.1, "'26")]:
+    ax.text(x, 1.02, name, transform=ax.get_xaxis_transform(), ha="center",
+            fontsize=9, color=C["sub"])
+ax.set_ylim(0, 1); ax.set_xlim(2009.6, 2026.6)
+ax.set_ylabel("share resolved within 24 hours")
+ax.legend(loc="lower left", frameon=False, fontsize=9, ncols=2)
+plt.tight_layout(); plt.show()
+```
+
+```{python}
+#| label: mix-adjust
+#| code-summary: "Composition-adjusted citywide same-day rate"
+ctype_all = df["complaint_type"].where(df["complaint_type"].isin(TYPES), "Other")
+mix = ctype_all.value_counts(normalize=True)                     # fixed all-era mix
+era_type_p24 = (df.assign(ct=ctype_all).groupby(["era", "ct"], observed=True)["bin"]
+                  .apply(lambda s: (s <= 1).mean()).unstack("ct"))
+raw_all = df.groupby("era", observed=True)["bin"].apply(lambda s: (s <= 1).mean())
+adj_all = (era_type_p24 * mix).sum(axis=1)
+adj = pd.DataFrame({"raw P(≤24h)": raw_all.round(3), "mix-adjusted": adj_all.round(3)})
+adj.index = [ERA_LABEL[k] for k in adj.index]
+adj
+```
+
+The gap between the raw and mix-adjusted columns is the composition effect: how much
+of each era's apparent speed comes from *what was reported* rather than *how fast it
+was handled*. Interpretation in the prose below uses the adjusted view.
+
+## Era × complaint type
+
+```{python}
+#| label: fig-heatmap
+#| fig-cap: "Recorded share of requests resolved within 24 hours, by era and complaint type."
+#| code-summary: "Era × type heatmap"
+tt = ["ALL"] + TYPES
+mat = np.full((len(tt), len(era_keys)), np.nan)
+for j, k in enumerate(era_keys):
+    sub = df[df["era"] == k]
+    mat[0, j] = (sub["bin"] <= 1).mean()
+    for i, t in enumerate(TYPES, start=1):
+        s2 = sub.loc[sub["complaint_type"] == t, "bin"]
+        if len(s2):
+            mat[i, j] = (s2 <= 1).mean()
+fig, ax = plt.subplots(figsize=(8.5, .45 * len(tt) + 2))
+ax.imshow(mat, cmap="viridis", vmin=0, vmax=1, aspect="auto")
+ax.set_xticks(range(len(era_keys)), [ERA_LABEL[k] for k in era_keys],
+              rotation=18, ha="right", fontsize=9)
+ax.set_yticks(range(len(tt)),
+              ["All complaints" if t == "ALL" else t.title() for t in tt], fontsize=9)
+for i in range(len(tt)):
+    for j in range(len(era_keys)):
+        if not np.isnan(mat[i, j]):
+            ax.text(j, i, f"{mat[i,j]:.0%}", ha="center", va="center", fontsize=8,
+                    color="#0B0E14" if mat[i, j] > .55 else "#F2F4F8")
+ax.grid(False); plt.tight_layout(); plt.show()
+```
+
+## Within the same tract: administration deltas
+
+The citywide picture can hide local reversals. Here we fit the **same hierarchical
+Bayesian model that powers the live map** (tract → neighborhood → borough → city,
+per complaint type; concentrations by marginal-likelihood MLE) separately to each
+era's data, then difference the posterior same-day probabilities tract by tract.
+Only tracts with at least 30 requests of that type in *both* eras are compared, so
+the deltas reflect local evidence rather than shared priors.
+
+```{python}
+#| label: era-fits
+#| code-summary: "Fit the hierarchical model per era; compute tract-level deltas"
+geo = M.GeoIndex(json.load(open(os.path.join(ROOT, "data", "geo_lookup.json"))))
+MIN_TRACT_N = 30
+tix = {t: i for i, t in enumerate(TYPES + ["Other"])}
+
+fits, counts = {}, {}
+for key in era_keys:
+    sub = df[df["era"] == key].copy()
+    sub["ctype"] = M.collapse_types(sub["complaint_type"], TYPES)
+    fits[key] = M.fit(sub, geo, TYPES + ["Other"], M.Config("era", half_life_days=None),
+                      sub["created_date"].max())
+    s2 = sub[sub["geoid"].notna()]
+    counts[key] = s2.groupby([s2["geoid"], s2["ctype"]], observed=True).size()
+
+def p24_and_var(fm):
+    a = fm.a_tract; A = a.sum(-1); Ac = a[..., :2].sum(-1)
+    m = Ac / A
+    return m, m * (1 - m) / (A + 1)
+
+def tract_deltas(a_key, b_key):
+    ma, va = p24_and_var(fits[a_key]); mb, vb = p24_and_var(fits[b_key])
+    out = {}
+    for t in TYPES:
+        ti = tix[t]; recs = []
+        for g, gi in geo.tract_ix.items():
+            if counts[a_key].get((g, t), 0) < MIN_TRACT_N: continue
+            if counts[b_key].get((g, t), 0) < MIN_TRACT_N: continue
+            d = ma[gi, ti] - mb[gi, ti]
+            se = np.sqrt(va[gi, ti] + vb[gi, ti])
+            recs.append((g, d, se))
+        if len(recs) >= 25:
+            dd = np.array([r[1] for r in recs])
+            out[t] = {"recs": recs, "n": len(recs),
+                      "med": np.median(dd),
+                      "q10": np.percentile(dd, 10), "q90": np.percentile(dd, 90),
+                      "up": np.mean([d - 1.645 * s > 0 for _, d, s in recs]),
+                      "dn": np.mean([d + 1.645 * s < 0 for _, d, s in recs])}
+    return out
+
+D_ad = tract_deltas("adams", "deblasio")
+D_ca = tract_deltas("current", "adams")
+
+def delta_table(D):
+    return pd.DataFrame({
+        "tracts compared": {t.title(): v["n"] for t, v in D.items()},
+        "median Δ (pts)": {t.title(): round(100 * v["med"], 1) for t, v in D.items()},
+        "10th–90th pct": {t.title(): f'{100*v["q10"]:+.0f} … {100*v["q90"]:+.0f}'
+                          for t, v in D.items()},
+        "share sig. faster": {t.title(): f'{v["up"]:.0%}' for t, v in D.items()},
+        "share sig. slower": {t.title(): f'{v["dn"]:.0%}' for t, v in D.items()},
+    }).sort_values("median Δ (pts)", ascending=False)
+
+```
+
+```{python}
+#| label: tbl-adams-deblasio
+#| tbl-cap: 'Adams vs de Blasio (pre-COVID): change in P(resolved ≤ 24h) within the same tract, by complaint type. "Sig." = the tract''s 90% interval on the change excludes zero.'
+#| code-summary: "Delta table: Adams vs de Blasio"
+delta_table(D_ad)
+```
+
+```{python}
+#| label: fig-delta-map
+#| fig-cap: "Tract-level change in same-day resolution probability, Adams era minus de Blasio (pre-COVID) era, for the mapped complaint type. Green = faster under Adams; purple = slower. Gray tracts lack 30+ requests in both eras."
+#| code-summary: "Choropleth of tract deltas"
+from matplotlib.collections import PolyCollection
+from matplotlib.colors import TwoSlopeNorm
+
+t_map = max(D_ad, key=lambda t: D_ad[t]["n"])       # best-covered type
+dm = {g: d for g, d, _ in D_ad[t_map]["recs"]}
+gj = json.load(open(os.path.join(ROOT, "web", "data", "tracts.geojson")))
+polys, vals = [], []
+for f in gj["features"]:
+    geom, g = f["geometry"], f["properties"]["geoid"]
+    rings = [geom["coordinates"][0]] if geom["type"] == "Polygon" \
+        else [p[0] for p in geom["coordinates"]]
+    for r in rings:
+        polys.append(r); vals.append(dm.get(g, np.nan))
+vals = np.array(vals, dtype=float)
+vmax = max(np.nanpercentile(np.abs(vals), 95), .02)
+fig, ax = plt.subplots(figsize=(9, 8.5))
+ax.add_collection(PolyCollection([p for p, v in zip(polys, vals) if np.isnan(v)],
+                                 facecolor="#1A2030", edgecolor=C["line"], linewidth=.1))
+pc = PolyCollection([p for p, v in zip(polys, vals) if not np.isnan(v)],
+                    array=vals[~np.isnan(vals)], cmap="PRGn",
+                    norm=TwoSlopeNorm(vcenter=0, vmin=-vmax, vmax=vmax),
+                    edgecolor=C["line"], linewidth=.1)
+ax.add_collection(pc); ax.autoscale(); ax.set_aspect(1.3); ax.axis("off")
+cb = fig.colorbar(pc, ax=ax, shrink=.6, pad=.01)
+cb.set_label(f"Δ P(≤24h): {t_map.title()}", color=C["sub"])
+cb.ax.yaxis.set_tick_params(color=C["sub"])
+ax.set_title(f"{t_map.title()} — same-day resolution, Adams minus de Blasio",
+             fontsize=12, color=C["text"])
+plt.tight_layout(); plt.show()
+```
+
+```{python}
+#| label: tbl-current-adams
+#| tbl-cap: "2026 administration vs Adams — provisional: only ~5 months of matured 2026 data."
+#| code-summary: "Current administration vs Adams (provisional)"
+delta_table(D_ca) if D_ca else "Too little 2026 data yet for tract-level comparison."
+```
+
+## Interpretation
+
+*(This section is written against the rendered numbers above; the inline values
+update automatically on re-render.)*
+
+```{python}
+#| label: interp-values
+#| code-summary: "Values referenced in the prose"
+p24 = lambda k, t=None: (era_type_p24.loc[k, t] if t
+                         else raw_all.loc[k])
+noise_types = [t for t in TYPES if "Noise" in t]
+noise_share = {k: df[df["era"] == k]["complaint_type"].isin(noise_types).mean()
+               for k in era_keys}
+raw_gain = raw_all.loc["adams"] - raw_all.loc["bloomberg"]
+adj_gain = adj_all.loc["adams"] - adj_all.loc["bloomberg"]
+covid_noise = noise_share.get("covid", float("nan"))
+```
+
+Findings that survive the composition and artifact controls:
+
+1. **Most of the all-complaints "improvement" is composition.** Raw same-day
+   resolution rose from `{python} f"{raw_all.loc['bloomberg']:.0%}"` (Bloomberg) to
+   `{python} f"{raw_all.loc['adams']:.0%}"` (Adams) — but holding the complaint mix
+   fixed, the rise is only `{python} f"{adj_all.loc['bloomberg']:.0%}"` →
+   `{python} f"{adj_all.loc['adams']:.0%}"`. Roughly
+   `{python} f"{1 - adj_gain/raw_gain:.0%}"` of the apparent improvement is the mix
+   shifting toward fast-resolving categories (noise complaints grew from
+   `{python} f"{noise_share['bloomberg']:.0%}"` of Bloomberg-era volume to
+   `{python} f"{noise_share['adams']:.0%}"` under Adams). Any claim that "311 got
+   faster under mayor X" that doesn't condition on complaint type is mostly measuring
+   New Yorkers' reporting habits.
+2. **The clearest operational pattern is agency-shaped, not administration-shaped.**
+   Housing types (all handled by HPD) improved *monotonically across every era*:
+   same-day resolution of Heat/Hot Water went
+   `{python} f"{p24('bloomberg','HEAT/HOT WATER'):.0%}"` →
+   `{python} f"{p24('deblasio','HEAT/HOT WATER'):.0%}"` →
+   `{python} f"{p24('adams','HEAT/HOT WATER'):.0%}"` from Bloomberg to de Blasio to
+   Adams, with Plumbing, Electric, and Paint/Plaster showing the same staircase from
+   near-zero. Meanwhile infrastructure types slipped across the same span — Water
+   System `{python} f"{p24('bloomberg','Water System'):.0%}"` →
+   `{python} f"{p24('adams','Water System'):.0%}"`, Traffic Signals
+   `{python} f"{p24('bloomberg','Traffic Signal Condition'):.0%}"` →
+   `{python} f"{p24('adams','Traffic Signal Condition'):.0%}"` — and police-handled
+   types (parking, noise) have been saturated near 99% for sixteen years. Secular
+   agency trajectories dominate administration boundaries.
+3. **Within types, administrations were not uniform across neighborhoods** — see
+   @tbl-adams-deblasio: the 10th–90th percentile spread of tract-level changes is
+   wide even where the median change is small, and the tract map shows spatial
+   clustering rather than uniform shifts.
+4. **COVID was a composition shock more than a slowdown.** The raw all-complaints
+   series *rose* during 2020–21, because lockdown-era noise complaints surged to
+   `{python} f"{covid_noise:.0%}"` of all volume; per-type effects ran in both
+   directions (heat improved, derelict-vehicle and traffic-signal work slowed). This
+   is exactly why the COVID window is quarantined and why the mix-adjusted row is
+   the one to read.
+5. **The 2026 administration's record is provisional** (@tbl-current-adams): five
+   months of matured data, seasonally unbalanced (winter/spring only), and best
+   treated as a baseline for future updates rather than a verdict — its lower heat
+   number vs Adams, for instance, reflects an all-winter sample.
+
+## Why the live map still trains on recent data only
+
+The dashboard deliberately ignores this history when estimating *current* odds. Its
+evaluation selected a 90-day exponential decay: under that weighting a two-year-old
+request carries weight `{python} f"{2**(-730/90):.4f}"` — effectively zero — and the
+prior comparison showed shorter memory beats longer memory for near-term prediction
+(`docs/evaluation_results.md`). History answers "what changed"; the last two years
+answer "what should I expect if I call today." Those are different questions, and
+this document exists so the map doesn't have to answer both.
+
+## Caveats, stated plainly
+
+- **Recorded ≠ experienced.** Closure timestamps are administrative events. Era
+  differences partly reflect record-keeping practice; batch-closure and never-closed
+  rates are quantified in the era context table.
+- **Bloomberg = final term only.** The public dataset begins 2010; nothing here
+  speaks to 2002–2009.
+- **Geocoding improves over time** (86% of 2010 requests are tract-mappable vs ~98%
+  today), so early-era tract comparisons rest on a slightly thinner, possibly
+  non-random subset of requests.
+- **Taxonomy drift is handled conservatively**: only unambiguous renames are merged,
+  and analysis is restricted to types present in every era. Types born after 2014
+  (e.g., outdoor dining complaints) are simply out of scope for the long arc.
+- **Administrations are periods, not causes.** Nothing here identifies *why* a
+  probability moved — budgets, laws, weather, and reporting behavior all changed
+  concurrently. This is a descriptive account of associations within fixed geography.
+
+## Technical addendum: modeling decisions, sensitivity, and robustness {#sec-addendum}
+
+This appendix records the decisions behind the machinery this analysis reuses, and the
+checks run along the way. Numbers quoted from prior evaluations are the documented
+outputs of the pipeline's own harnesses (`docs/evaluation_results.md`,
+`docs/statistical_review.md`); everything specific to *this* document is computed in
+the chunks above.
+
+### Model class
+
+The estimator throughout is a hierarchical Dirichlet–Multinomial over the nine ordered
+duration bins, with partial pooling tract → NTA → borough → citywide, fit as a
+top-down conjugate cascade (each node's Dirichlet prior is κ pseudo-counts shaped like
+its parent's posterior mean). Alternatives considered and rejected: continuous-time
+survival models (non-conjugate inference at 40M rows for a deliverable that is the
+binned distribution anyway); continuation-ratio Beta–Binomial stacks (equally
+conjugate but no actual adjacent-bin smoothing without breaking conjugacy — bin order
+is instead respected at evaluation time via the ranked probability score); and full
+hierarchical Bayes with sampled concentrations (intractable for monthly refresh; the
+parent nodes are so data-rich that empirical-Bayes plug-in loses little). Pooling runs
+within complaint type across geography, not across types within a tract, because
+resolution speed is owned by the responsible agency, not the neighborhood.
+
+### Configuration contest (live map)
+
+Eight configurations were compared on a strict temporal holdout (train 2025-01 →
+2026-01, test 2026-01 → 2026-06; all hyperparameters fit on train only), scored by
+mean RPS (primary), log-loss, calibration error, and interval coverage, with paired
+block-bootstrap SEs over tract×type cells:
+
+| configuration | RPS | verdict |
+|---|---|---|
+| No pooling (uniform / Jeffreys) | 0.1096 / 0.1086 | collapse to log(9) log-loss on unseen cells |
+| Hierarchy, fixed κ=15 | 0.1074 | pooling helps even hand-tuned |
+| Hierarchy, EB κ (per type / per type-level) | 0.1070 / 0.1070 | learned pooling |
+| **+ 90-day decay (shipped)** | **0.1064** | best; advantage concentrated in near-term months |
+| + 180-day / 365-day decay | 0.1067 / 0.1068 | longer memory loses |
+
+The no-pooling baselines' failure mode is exact and diagnostic: on tract×type cells
+unseen in training they predict the bare prior — uniform over nine bins, log-loss
+log(9) = 2.197 — while the hierarchy falls back to the neighborhood estimate (~1.44).
+
+### Two defects found by audit, both fixed
+
+An adversarial computational audit (independent re-implementation of the cascade;
+verification of all 51,150 exported cells) found:
+
+1. **Concentration estimation under-converged.** Minka's fixed-point iteration stalled
+   far short of the marginal-likelihood optimum on these flat surfaces (tract-level
+   Heat/Hot Water: κ ≈ 230 vs true optimum ≈ 800, a 78-nat likelihood gap;
+   Illegal Parking: 87 vs ≈ 400, 288 nats). The estimator now maximizes the exact
+   Dirichlet–Multinomial marginal likelihood by bounded scalar optimization.
+   Predictions moved negligibly (the flat surface is why the defect was silent), but
+   pooling strengths are now genuine MLEs — including the era fits above.
+2. **Raw posterior intervals badly under-covered.** At nominal 90%, dense-cell
+   coverage of realized near-future rates was 0.25–0.51 — including on an even/odd
+   day-of-year split where drift is impossible by construction, refuting an initial
+   "temporal drift" explanation. Real request outcomes are correlated within cells
+   (repeat reports, batch closures, day-of-week structure) and the service regime
+   itself moves. The live map's intervals now add a per-type, per-threshold regime
+   variance estimated from rolling 60-day temporal holdouts: backtest coverage
+   0.90–0.92, fully out-of-sample check 0.87. A multiplicative (design-effect)
+   correction was tested and rejected — it absurdly inflates sparse-cell intervals;
+   the additive form leaves them sampling-dominated.
+
+### Sensitivity and robustness checks run
+
+- **Decay half-life**: 90/180/365-day variants scored month-by-month; the 90-day
+  advantage decays over the forecast horizon exactly as a drift-tracking
+  interpretation predicts (and motivates the monthly refresh cycle).
+- **Seasonal blending**: a same-season-last-year kernel (conjugate, weight
+  β·2^(−|age−1yr|/bw)) was evaluated under a rolling-monthly protocol mirroring
+  deployment. Best variant: ΔRPS −0.00001 ± 0.00008 vs recency-only — a null — with
+  heavier blends slightly worse. Not adopted; scheduled for re-test once ≥2 full years
+  of history exist (`pipeline/eval_seasonal.py`). This analysis's 16-year archive now
+  makes that re-test possible.
+- **Censoring**: the 31-day maturity cutoff is keyed to the top bin boundary, making
+  the "still open ⇒ month+" assignment deductively exact rather than imputed;
+  verified against pull dates. Composition of the month+ bin was audited: 8.8% of
+  matured requests land there, 28.5% of those never close; for Heat/Hot Water >99% of
+  month+ cases are administrative non-closures — reported as-is with a
+  high-open-share flag.
+- **Cleaning funnel** (live window): 5.34M → 5.04M rows; ~188k double-submissions
+  collapsed, ~97k exact-zero durations dropped, ~85k batch closures flagged and
+  *kept* (dropping them would optimistically bias slow agencies). A full evaluation
+  re-run excluding batch-flagged records remains open; for this document their
+  per-era rates are disclosed in the era context table instead.
+- **RPS implementation** verified against hand computation; bootstrap resamples
+  cells, not requests (within-cell correlation would otherwise understate SEs).
+
+### Choices specific to this historical analysis
+
+- **Era fits use no decay**: the estimand is each era's average recorded behavior,
+  not a nowcast. Concentrations are re-estimated per era, so pooling strength adapts
+  to each era's data density.
+- **Stable-type restriction** (≥15k requests in every era) plus conservative 1:1
+  rename normalization; types that split or merged across the 2014 taxonomy overhaul
+  are excluded rather than guessed at.
+- **Tract deltas require n ≥ 30 in both eras** so differences reflect local evidence
+  rather than two shared priors agreeing with each other; interval on the delta is
+  the normal combination of the two independent Beta variances. This intentionally
+  reports *sampling* uncertainty for a fixed-era estimand — the regime-variance
+  component the live map adds is a forecasting correction and would be wrong here.
+- **Composition adjustment** fixes the complaint mix at the pooled all-era
+  distribution; the raw-vs-adjusted gap isolates how much of each era's apparent
+  speed is reporting mix.
+- **COVID quarantine** (2020-03 – 2021-12) keeps an extraordinary operating regime
+  out of both adjacent administrations' records.
+- **Known residual risks**: geocoding coverage drift (86% → 98% tract-mappable);
+  recorded-vs-experienced resolution; single-observation seasonality in the
+  five-month 2026 era.
+
+### Reproduction
+
+```
+python3 pipeline/fetch_311.py            # live window (2025-)
+python3 pipeline/fetch_311_history.py    # 2010-2024 archive (~38M rows)
+python3 pipeline/prepare.py && python3 pipeline/prepare_hist.py --all
+quarto render docs/historical_analysis.qmd
+```
+
+Full machine-generated detail: `docs/model_spec.md` (specification),
+`docs/evaluation_results.md` (configuration contest), `docs/statistical_review.md`
+(audit), `docs/METHODS.md` (public methods).
+
+---
+
+*Data: NYC Open Data — 311 Service Requests (2010–2019 archive `76ig-c548`; 2020–present
+`erm2-nwe9`). Cleaning and model code: `pipeline/` in this repository. Not affiliated
+with the City of New York.*

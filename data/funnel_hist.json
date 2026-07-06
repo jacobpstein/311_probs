@@ -1,0 +1,152 @@
+{
+  "2010": {
+    "raw": 2089792,
+    "after_double_submission": 1910621,
+    "closed_null_dropped": 97,
+    "zero_duration_dropped": 88887,
+    "after_duration_filters": 1785127,
+    "batch_flagged": 566618,
+    "tract_share": 0.8625,
+    "after_geography": 1745209
+  },
+  "2011": {
+    "raw": 2011177,
+    "after_double_submission": 1821272,
+    "closed_null_dropped": 392,
+    "zero_duration_dropped": 84479,
+    "after_duration_filters": 1706827,
+    "batch_flagged": 441029,
+    "tract_share": 0.8601,
+    "after_geography": 1672671
+  },
+  "2012": {
+    "raw": 1837132,
+    "after_double_submission": 1678454,
+    "closed_null_dropped": 205,
+    "zero_duration_dropped": 76071,
+    "after_duration_filters": 1573407,
+    "batch_flagged": 413671,
+    "tract_share": 0.8766,
+    "after_geography": 1539930
+  },
+  "2013": {
+    "raw": 1887596,
+    "after_double_submission": 1719261,
+    "closed_null_dropped": 422,
+    "zero_duration_dropped": 82626,
+    "after_duration_filters": 1612690,
+    "batch_flagged": 431543,
+    "tract_share": 0.8642,
+    "after_geography": 1576677
+  },
+  "2014": {
+    "raw": 2156749,
+    "after_double_submission": 1991893,
+    "closed_null_dropped": 26,
+    "zero_duration_dropped": 89345,
+    "after_duration_filters": 1878664,
+    "batch_flagged": 479322,
+    "tract_share": 0.8938,
+    "after_geography": 1839737
+  },
+  "2015": {
+    "raw": 2322539,
+    "after_double_submission": 2189886,
+    "closed_null_dropped": 735,
+    "zero_duration_dropped": 87040,
+    "after_duration_filters": 2077621,
+    "batch_flagged": 284500,
+    "tract_share": 0.9008,
+    "after_geography": 2023083
+  },
+  "2016": {
+    "raw": 2409088,
+    "after_double_submission": 2322206,
+    "closed_null_dropped": 58,
+    "zero_duration_dropped": 81975,
+    "after_duration_filters": 2221135,
+    "batch_flagged": 96407,
+    "tract_share": 0.9139,
+    "after_geography": 2174872
+  },
+  "2017": {
+    "raw": 2508543,
+    "after_double_submission": 2423997,
+    "closed_null_dropped": 32,
+    "zero_duration_dropped": 90044,
+    "after_duration_filters": 2316150,
+    "batch_flagged": 157789,
+    "tract_share": 0.9197,
+    "after_geography": 2278670
+  },
+  "2018": {
+    "raw": 2760175,
+    "after_double_submission": 2669615,
+    "closed_null_dropped": 29,
+    "zero_duration_dropped": 91945,
+    "after_duration_filters": 2563277,
+    "batch_flagged": 289024,
+    "tract_share": 0.9299,
+    "after_geography": 2526402
+  },
+  "2019": {
+    "raw": 2631126,
+    "after_double_submission": 2577213,
+    "closed_null_dropped": 20,
+    "zero_duration_dropped": 74046,
+    "after_duration_filters": 2487938,
+    "batch_flagged": 326505,
+    "tract_share": 0.9532,
+    "after_geography": 2466920
+  },
+  "2020": {
+    "raw": 2942024,
+    "after_double_submission": 2829654,
+    "closed_null_dropped": 2,
+    "zero_duration_dropped": 81853,
+    "after_duration_filters": 2728164,
+    "batch_flagged": 359940,
+    "tract_share": 0.979,
+    "after_geography": 2697362
+  },
+  "2021": {
+    "raw": 3220882,
+    "after_double_submission": 3141715,
+    "closed_null_dropped": 5,
+    "zero_duration_dropped": 82090,
+    "after_duration_filters": 3047822,
+    "batch_flagged": 397610,
+    "tract_share": 0.9817,
+    "after_geography": 3035039
+  },
+  "2022": {
+    "raw": 3169960,
+    "after_double_submission": 3048862,
+    "closed_null_dropped": 76,
+    "zero_duration_dropped": 96371,
+    "after_duration_filters": 2944780,
+    "batch_flagged": 64170,
+    "tract_share": 0.9849,
+    "after_geography": 2941555
+  },
+  "2023": {
+    "raw": 3224723,
+    "after_double_submission": 3154206,
+    "closed_null_dropped": 20245,
+    "zero_duration_dropped": 61774,
+    "after_duration_filters": 3068296,
+    "batch_flagged": 18362,
+    "tract_share": 0.9852,
+    "after_geography": 3065065
+  },
+  "2024": {
+    "raw": 3456770,
+    "after_double_submission": 3321909,
+    "closed_null_dropped": 27562,
+    "zero_duration_dropped": 57183,
+    "after_duration_filters": 3236322,
+    "batch_flagged": 22387,
+    "tract_share": 0.9847,
+    "after_geography": 3233958
+  }
+}

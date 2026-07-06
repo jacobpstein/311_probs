@@ -10,3 +10,7 @@ __pycache__/
 
 # Local update state
 data/update_state.json
+
+# Historical raw + intermediate data (regenerable via pipeline/fetch_311_history.py)
+data/raw_hist/
+data/prepared_hist/
