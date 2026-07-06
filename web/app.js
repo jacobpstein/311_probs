@@ -482,7 +482,12 @@ function wireInteractions() {
     if (hovered) map.setFeatureState({ source: 'tracts', id: hovered }, { hover: false });
     hovered = null; map.getCanvas().style.cursor = ''; hideTooltip();
   });
-  map.on('click', 'tract-fill', e => { if (e.features.length) selectTract(e.features[0].id); });
+  map.on('click', 'tract-fill', e => {
+    if (!e.features.length) return;
+    const id = e.features[0].id;
+    if (id === state.selected) deselect();      // click selected tract again to clear
+    else selectTract(id);
+  });
   map.on('click', e => {
     const f = map.queryRenderedFeatures(e.point, { layers: ['tract-fill'] });
     if (!f.length) deselect();
@@ -502,13 +507,19 @@ function wireInteractions() {
     map.fitBounds(BORO_BOUNDS[state.boro], { padding: 40, duration: 900 });
     if (state.shading === 'relative') paintMap();  // re-stretch to the focused borough
   });
-  document.querySelectorAll('.legend-toggle button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.legend-toggle button[data-shade]').forEach(b => b.onclick = () => {
     state.shading = b.dataset.shade;
-    document.querySelectorAll('.legend-toggle button').forEach(x => {
+    document.querySelectorAll('.legend-toggle button[data-shade]').forEach(x => {
       const on = x === b; x.classList.toggle('active', on); x.setAttribute('aria-checked', on);
     });
     paintMap();
   });
+  const helpBtn = document.getElementById('legend-help');
+  const hint = document.getElementById('legend-hint');
+  helpBtn.onclick = () => {
+    hint.hidden = !hint.hidden;
+    helpBtn.setAttribute('aria-expanded', String(!hint.hidden));
+  };
   document.getElementById('play').onclick = togglePlay;
   wireSearch();
 }

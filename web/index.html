@@ -50,7 +50,14 @@
   <div class="legend-toggle" role="radiogroup" aria-label="Color shading">
     <button data-shade="absolute" class="active" role="radio" aria-checked="true">Absolute</button>
     <button data-shade="relative" role="radio" aria-checked="false">Relative</button>
-    <span class="legend-toggle-help" title="Absolute shades 0–100%. Relative stretches the colors across only the values in view, revealing variation for types that cluster in a narrow band.">?</span>
+    <button id="legend-help" class="legend-toggle-help" aria-expanded="false" aria-controls="legend-hint" title="When to use each mode">?</button>
+  </div>
+  <div id="legend-hint" hidden>
+    <b>Absolute</b> keeps a fixed 0–100% scale — use it to judge how fast something is,
+    and to compare across complaint types or time windows.
+    <b>Relative</b> stretches the colors across just the values in view — use it to spot
+    which neighborhoods are the outliers within one type. Colors amplify small
+    differences, so check the range printed above for the true spread.
   </div>
 </div>
 
