@@ -390,7 +390,10 @@ function renderLadder(geoid, c, cum) {
     const lo = isTail ? Math.max(0, 1 - c.hi[7]) : c.lo[row.cum];
     const hi = isTail ? Math.min(1, 1 - c.lo[7]) : c.hi[row.cum];
     const inc = isTail ? c.bp[8] : c.bp[row.cum];
-    const col = classColor(isTail ? cum[7] < 0.99 ? 0.1 : value : value);
+    // Tail row means "still unresolved after a month" — the opposite reading of the
+    // cumulative rows — so it gets a distinct red outside the viridis ramp instead
+    // of a ramp color (which made it look identical to the low "3 hours" row).
+    const col = isTail ? '#C95C5C' : classColor(value);
     const active = !isTail && row.cum === cIdx;
 
     const div = document.createElement('div');
