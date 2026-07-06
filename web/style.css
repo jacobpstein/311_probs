@@ -74,8 +74,8 @@ html,body { margin:0; height:100%; background:var(--bg-0); color:var(--text-1);
   transition:opacity .3s ease; }
 #hint.hidden { opacity:0; }
 
-/* Legend */
-#legend { position:fixed; left:16px; bottom:16px; z-index:20; padding:12px 16px; width:264px; }
+/* Legend (z above scrubber so its controls stay clickable if they ever overlap) */
+#legend { position:fixed; left:16px; bottom:16px; z-index:21; padding:12px 16px; width:264px; }
 #legend-caption { font-size:12px; color:var(--text-2); margin-bottom:8px; line-height:16px; }
 .legend-swatches { display:flex; gap:2px; }
 .legend-swatches div { height:12px; flex:1; border-radius:2px; }
@@ -173,6 +173,12 @@ body.panel-open #scrubber { left:calc(50% - 208px); }
 #methods .fine { color:var(--text-3); font-size:11px; }
 
 .maplibregl-ctrl-attrib { font-size:10px; }
+
+/* Mid widths: center-anchored scrubber would overlap the legend — anchor it
+   just right of the legend instead (legend: 16 + 264 + 16 = 296px). */
+@media (min-width:769px) and (max-width:1180px) {
+  #scrubber, body.panel-open #scrubber { left:296px; transform:none; }
+}
 
 /* Mobile */
 @media (max-width:768px) {
