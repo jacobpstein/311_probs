@@ -155,6 +155,12 @@ def main() -> None:
     }
     json.dump(meta, open(os.path.join(WEB_DATA, "meta.json"), "w"))
 
+    # persist the state the incremental updater (pipeline/update.py) resumes from
+    state = {"maturity_cutoff": t_ref.strftime("%Y-%m-%dT%H:%M:%S"),
+             "half_life_days": HALF_LIFE, "data_through": str(t_ref.date()),
+             "n_types": N_TYPES}
+    json.dump(state, open(os.path.join(ROOT, "data", "update_state.json"), "w"), indent=2)
+
     for fn in ["tracts.geojson", "probs.json", "meta.json"]:
         sz = os.path.getsize(os.path.join(WEB_DATA, fn)) / 1e6
         print(f"  {fn}: {sz:.2f} MB", flush=True)

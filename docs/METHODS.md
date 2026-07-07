@@ -397,7 +397,7 @@ python3 pipeline/fetch_311.py     # download the raw 311 pulls (one-time, large)
 python3 pipeline/prepare.py       # clean, assign tracts, bin durations
 python3 pipeline/evaluate.py      # run the eight-way prior contest (§6)
 python3 pipeline/export_web.py    # fit the winner, write the app's data
-python3 -m http.server 8011 --directory web   # open http://localhost:8011
+python3 -m http.server 8012 --directory web   # open http://localhost:8012
 ```
 
 The design rationale for the interface is in [design_spec.md](design_spec.md); the full

@@ -1,10 +1,11 @@
 """Hierarchical Dirichlet-Multinomial model for 311 resolution-time bins.
 
-Implements docs/model_spec.md §1-3: top-down conjugate cascade
-(tract -> NTA -> borough -> city, per complaint type, city x type rooted in
-city x ALL), empirical-Bayes concentration via Minka's fixed point with a
-method-of-moments initializer and pooled per-level fallback, optional
-exponential time decay of counts.
+Implements docs/model_spec.md §1-3 (with the post-audit revisions in
+docs/statistical_review.md): top-down conjugate cascade (tract -> NTA -> borough
+-> city, per complaint type, city x type rooted in city x ALL), empirical-Bayes
+concentration by bounded maximization of the exact Dirichlet-Multinomial marginal
+likelihood with a pooled per-level fallback, optional exponential time decay of
+counts, and a regime-variance estimator for credible-interval calibration.
 """
 
 from dataclasses import dataclass

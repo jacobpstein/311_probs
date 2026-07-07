@@ -244,7 +244,7 @@ range for each estimate."* On bars, a hover/tap reveals exact numbers in the too
 ```
 ┌──────────────────────────────────────────────┐  400px wide, 24px padding
 │  Census Tract 291 · Bedford-Stuyvesant    ×  │  Fraunces 22px + NTA name 13px --text-2
-│  Brooklyn · 1,842 requests since 2023        │  meta line, Inter 12px --text-3
+│  Brooklyn · 1,842 requests since 2025        │  meta line, Inter 12px --text-3
 │  ────────────────────────────────────────    │  1px --line divider, 16px margins
 │  COMPLAINT TYPE                              │  section label
 │  (All) (Noise) (Heat/Hot Water) (Parking)…   │  chip row, wraps to 2 lines max + "More ▾"
