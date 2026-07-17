@@ -1,0 +1,48 @@
+/*-- scss:defaults --*/
+$teal: #1a535c;
+$cyan: #4ecdc4;
+$cream: #f7fff7;
+$pink: #ff6b6b;
+$gold: #ffe66d;
+
+$body-bg: $cream;
+$body-color: $teal;
+$link-color: $cyan;
+
+$presentation-heading-font: "Space Grotesk", sans-serif;
+$presentation-font-size-root: 32px;
+$font-family-sans-serif: "IBM Plex Sans", sans-serif;
+
+/*-- scss:rules --*/
+.reveal h1, .reveal h2, .reveal h3 {
+  font-family: $presentation-heading-font;
+  font-weight: 700;
+  color: $teal;
+}
+.reveal .slides section.dark-slide {
+  background-color: $teal;
+  color: $cream;
+}
+.reveal .slides section.dark-slide h1,
+.reveal .slides section.dark-slide h2,
+.reveal .slides section.dark-slide h3 {
+  color: $cream;
+}
+.kicker {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 0.55em;
+  color: $pink;
+}
+.dark-slide .kicker { color: $gold; }
+.stat-pink { color: $pink; font-weight: 700; }
+.stat-cyan { color: $cyan; font-weight: 700; }
+.stat-gold { color: $gold; font-weight: 700; }
+.callout {
+  border-radius: 12px;
+  padding: 0.6em 1em;
+  background: rgba(26,83,92,0.06);
+}
+.dark-slide .callout { background: rgba(255,255,255,0.08); }

@@ -1,0 +1,305 @@
+---
+title: "How Fast Does New York Fix It?"
+subtitle: "Sixteen years of 311 data, one map, and a few surprises"
+author: "Jacob Patterson-Stein"
+format:
+  revealjs:
+    theme: [default, theme.scss]
+    slide-number: true
+    transition: fade
+    center: false
+    width: 1920
+    height: 1080
+    embed-resources: true
+---
+
+## {background-color="#1a535c"}
+
+::: {.kicker style="color:#4ecdc4;"}
+NYC 311 · 2010–2026
+:::
+
+# How Fast Does New York Fix It?
+
+Sixteen years of 311 data, one map, and a few surprises.
+
+Jacob Patterson-Stein · Data & Product Analysis
+
+## A Personal Prior {.dark-slide=false}
+
+::: {.columns}
+::: {.column width="45%"}
+![](images/snow-pile.jpeg)
+:::
+::: {.column width="55%"}
+::: {.kicker}
+A Personal Prior
+:::
+
+During the 2025 blizzard, a gas station near my apartment dumped its whole lot's snow on the corner by the crosswalk.
+
+Kids, dogs, everyone near my school block had to walk into a busy avenue to get around it. After a close call with a car, I called 311 — expecting maybe two weeks, if the snow didn't melt first.
+
+**The next day, a path was cut clean through the pile.**
+
+So what was the actual probability my request got answered in a day — and why were my priors so wrong?
+:::
+:::
+
+## The Question
+
+::: {.kicker}
+The Question
+:::
+
+Every New Yorker has filed a 311 complaint — a busted radiator in January, a car blocking the driveway, a streetlight out for weeks.
+
+**And every one has wondered the same thing: is anyone actually going to fix this, and when?**
+
+::: {.columns}
+::: {.column width="33%"}
+**16 years**\
+of public 311 data, 2010–2026
+:::
+::: {.column width="33%"}
+**Tens of millions**\
+of requests, cleaned and unified
+:::
+::: {.column width="33%"}
+**1 question**\
+what are the odds it gets fixed?
+:::
+:::
+
+## The Instrument {background-color="#1a535c" .dark-slide}
+
+::: {.kicker}
+The Instrument
+:::
+
+### A block-level tool for measuring city performance.
+
+For any census tract and any complaint type, the map estimates the probability a request resolves within 3 hours, a day, a week, or a month — built to support oversight, not just curiosity.
+
+The history behind it — sixteen years, from Bloomberg to the current Mamdani administration — is where the policy findings live.
+
+[View the live map →](https://jacobpstein.github.io/311_probs/)
+
+## The Hard Part
+
+::: {.kicker}
+The Hard Part
+:::
+
+### It isn't the map. It's the small blocks.
+
+::: {.columns}
+::: {.column width="50%"}
+::: {.callout}
+**Busy block**\
+1,800 of 2,000 closed same-day\
+**90%** — a solid estimate.
+:::
+:::
+::: {.column width="50%"}
+::: {.callout}
+**Quiet block**\
+2 of 3 closed same-day\
+**67%** — a coin flip dressed up as a statistic.
+:::
+:::
+:::
+
+Show that on a map and you've drawn a lie in bright colors.
+
+## The Fix
+
+::: {.kicker}
+The Fix
+:::
+
+### Let the small blocks borrow from their neighborhood.
+
+A tract with thousands of requests speaks for itself. A tract with three leans on its neighborhood, then its borough.
+
+The less local data a block has, the more it defers — and the map shows its work: every estimate carries a data-strength indicator.
+
+## The Audit {background-color="#1a535c" .dark-slide}
+
+::: {.kicker}
+Stress-Testing The Model
+:::
+
+### I audited my own model. It failed twice.
+
+::: {.columns}
+::: {.column width="33%"}
+**Bug 1 — Under-pooling**\
+The pooling routine quietly stopped short of the true optimum. Fixed with a method that finds the exact answer.
+:::
+::: {.column width="33%"}
+**Bug 2 — Overconfident bands**\
+An even/odd-day split test showed "90%" intervals covering reality only about half the time. Added measured month-to-month drift.
+:::
+::: {.column width="33%"}
+**Idea killed on purpose**\
+Blending in last year's same-season data tested as a statistical dead heat — so it didn't ship.
+:::
+:::
+
+**51,150 published estimates, re-checked one by one.**
+
+## Finding 1
+
+::: {.kicker}
+Finding 1
+:::
+
+### The city looks faster. Mostly because of what we count.
+
+Hold the mix of complaint types fixed, and most of the headline gain from Bloomberg to Adams disappears. The bulk of the "improvement" is composition, not faster service.
+
+The comparison stops at Adams on purpose: the current Mamdani administration, in office since January 2026, has only five months of matured data — too provisional for a verdict.
+
+## Finding 1, continued {background-color="#1a535c" .dark-slide}
+
+::: {.kicker}
+Finding 1, continued
+:::
+
+### Noise complaints are eating the average.
+
+The 311 app made noise complaints trivial to file. NYPD closes them almost instantly — an officer swings by, the party's over, ticket closed.
+
+**Stack the deck with fast complaints and the average looks great — without a single agency getting better at its job.**
+
+## Finding 2
+
+::: {.kicker}
+Finding 2
+:::
+
+### The real story is agency-shaped, not administration-shaped.
+
+- **HPD** (heat, plumbing, electrical, paint) — steady climb, every administration
+- **Infrastructure** (water system, traffic signals) — slipping, across the board
+- **Police-handled** (parking, noise) — pinned near-ceiling for 16 straight years
+
+None of these trajectories start or stop at an inauguration.
+
+## Finding 3 {background-color="#1a535c" .dark-slide}
+
+::: {.kicker}
+Finding 3
+:::
+
+### COVID wasn't a slowdown. It was a composition shock.
+
+Locked-down New Yorkers filed a flood of noise complaints — and those close fast, so the citywide average actually rose.
+
+Underneath, services split: heat kept improving while derelict-vehicle and traffic-signal work slowed.
+
+**The COVID window is quarantined from any administration's record — averaging it in would libel whoever was in office.**
+
+## Reading The Map Honestly
+
+::: {.kicker}
+Reading The Map Honestly
+:::
+
+### Two shading modes, so the colors never fool you.
+
+::: {.columns}
+::: {.column width="50%"}
+**Absolute**\
+Fixed 0–100% scale — colors mean the same thing everywhere.
+:::
+::: {.column width="50%"}
+**Relative**\
+Stretched to the on-screen range — reveals variation, but the legend always prints the true spread.
+:::
+:::
+
+## Lessons {background-color="#1a535c" .dark-slide}
+
+::: {.kicker}
+What We'd Tell The Next Team
+:::
+
+### Three lessons from sixteen years of city data.
+
+::: {.columns}
+::: {.column width="33%"}
+**The data-cleaning is the science.**\
+Negative durations, duplicate submissions, bulk-closure purges — how you handle these is the analysis, not preamble to it.
+:::
+::: {.column width="33%"}
+**"Recorded" is not "real."**\
+A resolved ticket means the city closed it — not always that the problem got fixed.
+:::
+::: {.column width="33%"}
+**Let the data kill your ideas.**\
+Seasonal blending, confident intervals, tidy narratives — the data vetoed all three, and the work is better for it.
+:::
+:::
+
+## Closing
+
+### Point at your block. Pick your problem. See the odds.
+
+- A proper seasonal model, now that there are sixteen winters to learn from.
+- Neighborhood equity questions — same complaint, same agency, different places.
+- A public era-comparison tool, so anyone can pull up their own block's history.
+
+[View the live map →](https://jacobpstein.github.io/311_probs/) · [github.com/jacobpstein](https://github.com/jacobpstein)
+
+## Technical Annex I — A Bayesian Primer {background-color="#1a535c" .dark-slide}
+
+::: {.kicker}
+Technical Annex I
+:::
+
+### The framework: why Bayesian, not just a raw proportion.
+
+A frequentist estimate for a tract is just its raw proportion: requests closed same-day, divided by requests filed. With three requests, that number can only ever be 0%, 33%, 67%, or 100%.
+
+Bayes' rule instead treats the tract's true rate as uncertain, gives it a **prior** informed by similar tracts, updates it with the tract's own data — its **likelihood** — to get a **posterior** estimate.
+
+**Crucially, the prior isn't guessed in advance — it's fit from the city's own data, tract by tract.**
+
+## Technical Annex II — Model Structure
+
+::: {.kicker}
+Technical Annex II
+:::
+
+### The model: a four-level Bayesian hierarchy.
+
+Each tract's outcomes are modeled as draws over the nine time-to-resolution bins — a Dirichlet–Multinomial, with the within-a-day slice shown here for clarity — governed by an unknown resolution rate θ~tract~. That rate is pulled toward its neighborhood's rate, which is pulled toward its borough's, and finally toward the citywide rate.
+
+$$w_i = \frac{n_i}{n_i + \kappa} \qquad \hat\theta_i = w_i \cdot \hat\theta_{tract,i} + (1-w_i) \cdot \hat\theta_{nbhd}$$
+
+n~i~ = requests observed in tract i · κ = fitted pooling strength · the same structure recurses up the chain: tract → neighborhood → borough → citywide root.
+
+Every published estimate ships with its own **data-strength indicator** — how much of the estimate is the tract's own record versus a borrowed neighborhood estimate.
+
+## Technical Annex III — Validation {background-color="#1a535c" .dark-slide}
+
+::: {.kicker}
+Technical Annex III
+:::
+
+### Validation: what the audit actually found and fixed.
+
+::: {.columns}
+::: {.column width="50%"}
+**κ estimation**\
+Minka's fixed-point update converged well short of the true optimum. Replaced with direct optimization of the marginal likelihood over κ.
+:::
+::: {.column width="50%"}
+**Interval coverage**\
+An even/odd-day split test showed nominal 90% intervals covering reality only ~50% of the time. Added a measured **regime variance** term for month-to-month drift.
+:::
+:::
+
+All 51,150 published tract × complaint-type estimates were re-derived under the corrected model before publishing.

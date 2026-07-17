@@ -62,7 +62,7 @@ ERAS = [
     ("deblasio",  "de Blasio (pre-COVID)",  "2014-01-01", "2020-03-01"),
     ("covid",     "COVID emergency",        "2020-03-01", "2022-01-01"),
     ("adams",     "Adams",                  "2022-01-01", "2026-01-01"),
-    ("current",   "2026 administration",    "2026-01-01", "2027-01-01"),
+    ("current",   "Mamdani (2026)",         "2026-01-01", "2027-01-01"),
 ]
 ERA_LABEL = {k: lb for k, lb, *_ in ERAS}
 
@@ -174,7 +174,7 @@ for x in [2014, 2022, 2026]:
     ax.axvline(x - .5, color=C["line"], lw=1)
 ax.axvspan(2020.17, 2022 - .5, color="#FFFFFF", alpha=.045)
 for x, name in [(2011.5, "Bloomberg"), (2017, "de Blasio"), (2020.9, "COVID"),
-                (2023.7, "Adams"), (2026.1, "'26")]:
+                (2023.7, "Adams"), (2026.1, "Mamdani")]:
     ax.text(x, 1.02, name, transform=ax.get_xaxis_transform(), ha="center",
             fontsize=9, color=C["sub"])
 ax.set_ylim(0, 1); ax.set_xlim(2009.6, 2026.6)
@@ -339,8 +339,8 @@ plt.tight_layout(); plt.show()
 
 ```{python}
 #| label: tbl-current-adams
-#| tbl-cap: "2026 administration vs Adams — provisional: only ~5 months of matured 2026 data."
-#| code-summary: "Current administration vs Adams (provisional)"
+#| tbl-cap: "Mamdani vs Adams — provisional: only ~5 months of matured 2026 data."
+#| code-summary: "Mamdani administration vs Adams (provisional)"
 delta_table(D_ca) if D_ca else "Too little 2026 data yet for tract-level comparison."
 ```
 
@@ -399,8 +399,9 @@ Findings that survive the composition and artifact controls:
    directions (heat improved, derelict-vehicle and traffic-signal work slowed). This
    is exactly why the COVID window is quarantined and why the mix-adjusted row is
    the one to read.
-5. **The 2026 administration's record is provisional** (@tbl-current-adams): five
-   months of matured data, seasonally unbalanced (winter/spring only), and best
+5. **The Mamdani administration's record is provisional** (@tbl-current-adams).
+   Zohran Mamdani took office in January 2026, succeeding Eric Adams, so this era is
+   only five months of matured data, seasonally unbalanced (winter/spring only), and best
    treated as a baseline for future updates rather than a verdict — its lower heat
    number vs Adams, for instance, reflects an all-winter sample.
 
@@ -541,7 +542,7 @@ verification of all 51,150 exported cells) found:
   out of both adjacent administrations' records.
 - **Known residual risks**: geocoding coverage drift (86% → 98% tract-mappable);
   recorded-vs-experienced resolution; single-observation seasonality in the
-  five-month 2026 era.
+  five-month Mamdani era (2026).
 
 ### Reproduction
 
