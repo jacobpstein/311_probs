@@ -65,6 +65,7 @@ html,body { margin:0; height:100%; background:var(--bg-0); color:var(--text-1);
   text-align:center; cursor:pointer; padding:0; font-family:var(--sans); }
 .legend-toggle-help:hover, .legend-toggle-help[aria-expanded="true"] { color:var(--text-1);
   border-color:var(--accent); }
+.data-through { margin-top:8px; font-size:10px; line-height:14px; color:var(--text-3); }
 #legend-hint { margin-top:8px; font-size:11px; line-height:15px; color:var(--text-3);
   border-top:1px solid var(--line); padding-top:8px; }
 #legend-hint b { color:var(--text-2); font-weight:600; }

@@ -19,6 +19,7 @@ import model as M
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 WEB_DATA = os.path.join(ROOT, "web", "data")
 N_TYPES = 20
+TYPES_FILE = os.path.join(ROOT, "pipeline", "types.json")
 HALF_LIFE = 90.0
 SIMPLIFY_TOL = 0.00015  # ~15 m; keeps borough coastlines crisp, ~halves file size
 
@@ -41,7 +42,22 @@ def main() -> None:
         df[c] = df[c].astype(str)
     geo = M.GeoIndex(geo_lookup)
 
-    top_types = df["complaint_type"].value_counts().nlargest(N_TYPES).index.tolist()
+    # The named-type list is pinned in pipeline/types.json so weekly refreshes cannot
+    # silently add/drop chips when borderline (or seasonal) types cross the top-N line.
+    counts = df["complaint_type"].value_counts()
+    current_top = counts.nlargest(N_TYPES).index.tolist()
+    if os.path.exists(TYPES_FILE):
+        top_types = json.load(open(TYPES_FILE))["types"]
+        missing = [t for t in top_types if t not in counts.index]
+        if missing:
+            raise SystemExit(f"pinned types absent from the data window: {missing}")
+        added, dropped = [t for t in current_top if t not in top_types], [t for t in top_types if t not in current_top]
+        if added or dropped:
+            print(f"NOTE type-list drift vs top-{N_TYPES} by volume (pinned list kept): "
+                  f"now in top-{N_TYPES} but not pinned: {added}; pinned but no longer top-{N_TYPES}: {dropped}", flush=True)
+    else:
+        top_types = current_top
+        json.dump({"types": top_types}, open(TYPES_FILE, "w"), indent=2)
     types = top_types + ["Other"]
     df["ctype"] = M.collapse_types(df["complaint_type"], top_types)
     t_ref = df["created_date"].max()
@@ -145,6 +161,7 @@ def main() -> None:
         "model": {
             "config": "P5a (hierarchical Dirichlet-Multinomial, EB κ via bounded MLE, "
                       "90-day decay, regime-calibrated intervals)",
+            "data_start": str(df["created_date"].min().date()),
             "data_through": str(t_ref.date()),
             "n_requests": int(len(df)),
             "n_tracts": len(data),

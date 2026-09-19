@@ -64,6 +64,8 @@ function lighten(hex, amt) {
   return `rgb(${r | 0},${g | 0},${b | 0})`;
 }
 function cumsum(bp) { const c = []; let s = 0; for (const x of bp) { s += x; c.push(s); } return c; }
+function fmtMonth(iso) { return new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }); }
+function fmtDay(iso) { return new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
 function pct(x) { return Math.round(x * 100) + '%'; }
 function cell(geoid, type) { const t = state.probs[geoid]; return t ? t[type] : null; }
 
@@ -89,10 +91,15 @@ const map = new maplibregl.Map({
 });
 
 async function boot() {
-  const [meta, probs, geo] = await Promise.all([
-    fetch('data/meta.json').then(r => r.json()),
-    fetch('data/probs.json').then(r => r.json()),
-    fetch('data/tracts.geojson').then(r => r.json()),
+  // Data refreshes weekly, but GitHub Pages lets browsers cache files for 10 minutes.
+  // Always revalidate the small meta file, then request the big files under a version
+  // key derived from it, so meta/probs/geometry can never come from different refreshes.
+  const meta = await fetch('data/meta.json', { cache: 'no-cache' }).then(r => r.json());
+  const md0 = meta.model || {};
+  const ver = encodeURIComponent([md0.data_through, md0.n_requests, md0.updated_at].join('-'));
+  const [probs, geo] = await Promise.all([
+    fetch(`data/probs.json?v=${ver}`).then(r => r.json()),
+    fetch(`data/tracts.geojson?v=${ver}`).then(r => r.json()),
   ]);
   state.meta = meta; state.probs = probs; state.geo = geo;
   for (const f of geo.features) {
@@ -138,6 +145,12 @@ async function boot() {
   map.addLayer({ id: 'labels', type: 'raster', source: 'labels' });
 
   buildScrubber(); buildLegend(); buildChips();
+  const dt = document.getElementById('data-through');
+  if (dt && meta.model.data_through) {
+    const md = meta.model;
+    dt.textContent = (md.data_start ? `Requests ${fmtMonth(md.data_start)} – ${fmtDay(md.data_through)}` : `Data through ${fmtDay(md.data_through)}`)
+      + (md.updated_at ? ` · refreshed ${fmtDay(md.updated_at)}` : '');
+  }
   wireInteractions();
   document.getElementById('loading').classList.add('hidden');  // show UI immediately
 
@@ -344,7 +357,7 @@ function renderPanel(geoid) {
   const cum = cumsum(c.bp);
   const allN = cell(geoid, 'ALL').n;
   document.getElementById('tract-meta').textContent =
-    `${props.boro} · ${allN.toLocaleString()} requests since 2025`;
+    `${props.boro} · ${allN.toLocaleString()} requests` + (state.meta.model.data_start ? ` since ${fmtMonth(state.meta.model.data_start)}` : '');
 
   // borrowing banner for sparse cells (honest shrinkage story)
   const banner = document.getElementById('zero-banner');

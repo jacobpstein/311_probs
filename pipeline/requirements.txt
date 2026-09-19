@@ -1,0 +1,7 @@
+# Dependencies for the data pipeline (fetch -> prepare -> export -> validate).
+# The repo-root requirements.txt is for the optional FastAPI host; this is separate.
+pandas>=2.2
+numpy>=1.26
+scipy>=1.11
+pyarrow>=15
+shapely>=2.0

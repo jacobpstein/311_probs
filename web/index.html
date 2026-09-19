@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>How Fast Does New York Fix It?</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-<link href="style.css?v=3" rel="stylesheet" />
+<link href="style.css?v=5" rel="stylesheet" />
 </head>
 <body>
 <div id="map"></div>
@@ -49,6 +49,7 @@
     <button data-shade="relative" role="radio" aria-checked="false">Relative</button>
     <button id="legend-help" class="legend-toggle-help" aria-expanded="false" aria-controls="legend-hint" title="When to use each mode">?</button>
   </div>
+  <div id="data-through" class="data-through"></div>
   <div id="legend-hint" hidden>
     <b>Absolute</b> keeps a fixed 0–100% scale — use it to judge how fast something is,
     and to compare across complaint types or time windows.
@@ -105,6 +106,6 @@
 </aside>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

@@ -72,7 +72,8 @@ RENAMES = {"HEATING": "HEAT/HOT WATER", "PAINT - PLASTER": "PAINT/PLASTER",
 
 parts = sorted(glob.glob(os.path.join(ROOT, "data", "prepared_hist", "year=*.parquet")))
 df = pd.concat([pd.read_parquet(p) for p in parts]
-               + [pd.read_parquet(os.path.join(ROOT, "data", "prepared.parquet"))],
+               + [pd.read_parquet(os.path.join(ROOT, "data", "prepared.parquet"))
+                  .query("created_date >= '2025-01-01'")],   # prepared_hist already covers <=2024
                ignore_index=True)
 df["created_date"] = pd.to_datetime(df["created_date"])
 for c in ["geoid", "nta", "boro", "complaint_type"]:

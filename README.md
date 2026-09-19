@@ -3,8 +3,8 @@
 **Live map → https://jacobpstein.github.io/311_probs/**
 
 Interactive census-tract map of the probability a NYC 311 request is resolved within
-different time windows, powered by a Bayesian hierarchical model fit on ~5.0M real
-service requests (Jan 2025 – Jun 2026). Tap any of ~2,300 census tracts and any
+different time windows, powered by a Bayesian hierarchical model fit on a rolling
+two-year window of real service requests, refreshed weekly. Tap any of ~2,300 census tracts and any
 complaint type to see the odds it gets resolved in hours, days, or a month. A companion
 reproducible report (`docs/historical_analysis.qmd`) extends the same model back to 2010
 to compare resolution odds across mayoral administrations, from Bloomberg to the current
@@ -12,7 +12,7 @@ Mamdani administration.
 
 ## Layout
 - `pipeline/` — data + model
-  - `fetch_311.py`          Download the recent (2025–) 311 window from NYC Open Data (Socrata)
+  - `fetch_311.py`          Download a rolling two-year 311 window from NYC Open Data (Socrata), month by month
   - `fetch_311_history.py`  Download the 2010–2024 archive for the historical analysis
   - `prepare.py`            Cleaning, tract point-in-polygon, censoring, 9-bin durations
   - `prepare_hist.py`       Same cleaning applied year-by-year to the historical pulls
@@ -20,6 +20,7 @@ Mamdani administration.
   - `evaluate.py`           Prior comparison (P0–P5c) with temporal holdout
   - `eval_seasonal.py`      Rolling-monthly test of same-season-last-year blending (not adopted)
   - `export_web.py`         Fit winning config, export web/data payload + geometry + update state
+  - `validate_export.py`    Sanity gate on the export (freshness, volume, invariants); blocks publishing on failure
   - `update.py`             Incremental monthly decay-then-add update
 - `web/`  — static MapLibre single-page app (open via any static server)
 - `docs/`
@@ -32,11 +33,31 @@ Mamdani administration.
 
 ## Run the pipeline
 ```
-python3 pipeline/fetch_311.py      # ~5.0M rows into data/raw/ (one-time)
+python3 pipeline/fetch_311.py      # rolling two-year window into data/raw/
 python3 pipeline/prepare.py        # -> data/prepared.parquet
 python3 pipeline/evaluate.py       # -> docs/evaluation_results.md (prior comparison)
 python3 pipeline/export_web.py     # -> web/data/{tracts.geojson,probs.json,meta.json}
 ```
+
+## Automated data refresh
+
+`.github/workflows/refresh-data.yml` keeps the live map current without manual work. Every
+Monday (and on demand from the Actions tab) it:
+
+1. pulls a rolling two-year window of 311 data ending 31 days ago (the maturity cutoff),
+2. cleans it, refits the model, and exports the map payload,
+3. runs `pipeline/validate_export.py` — the run stops here, publishing nothing, if the
+   data is stale, the pull looks truncated, or any posterior violates basic invariants,
+4. commits the refreshed `web/data/` and redeploys GitHub Pages.
+
+The complaint-type list is pinned in `pipeline/types.json` (grouping everything else into
+"Other") so a refresh can't silently add or drop a chip when a borderline or seasonal type
+crosses the top-20 line; each run prints how the pinned list has drifted from current
+volume, for a deliberate review.
+
+The map shows its own data window ("Requests Aug 2024 – Aug 2026 · refreshed …") so
+freshness is always visible. An optional `SOCRATA_APP_TOKEN` repository secret raises
+Socrata's rate limits.
 
 ## Run the app
 ```

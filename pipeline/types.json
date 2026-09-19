@@ -1,0 +1,25 @@
+{
+  "_comment": "Pinned complaint-type list for the weekly refresh (docs/model_spec.md 6.10: freeze between refits). Types outside this list are grouped into 'Other'. Review deliberately (e.g. quarterly); export_web.py prints drift versus current volume.",
+  "types": [
+    "Illegal Parking",
+    "Noise - Residential",
+    "HEAT/HOT WATER",
+    "Blocked Driveway",
+    "Noise - Street/Sidewalk",
+    "UNSANITARY CONDITION",
+    "Street Condition",
+    "PLUMBING",
+    "Abandoned Vehicle",
+    "Water System",
+    "Dirty Condition",
+    "Noise - Commercial",
+    "Noise",
+    "PAINT/PLASTER",
+    "Snow or Ice",
+    "Traffic Signal Condition",
+    "DOOR/WINDOW",
+    "Encampment",
+    "Noise - Vehicle",
+    "WATER LEAK"
+  ]
+}
