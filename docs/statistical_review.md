@@ -154,3 +154,37 @@ regime-calibrated intervals — the shipped estimates are verified correct, the 
 evidence-optimal under the stated model, the intervals now mean what the interface says
 they mean, and the remaining weaknesses are documented residuals rather than silent
 defects.
+
+---
+
+## 7. Addendum: handling of requests without a tract (found after publication)
+
+**Finding.** About 1.6% of matured requests (110,411 of 7,080,287 in the 2026-09 rebuild) have
+no census tract because their coordinates are missing or outside the city. The export step
+converted the tract column with `astype(str)`. Under pandas 2.x this turns missing values
+into the text `"nan"`, so those rows passed the "has a tract" test and were counted in tract
+index 0 (36005000100, Rikers Island, a single-tract neighborhood). Under pandas 3.x missing
+values are preserved and the rows are correctly limited to borough and citywide estimates.
+
+**Detection.** A scheduled refresh ran on a GitHub runner with pandas 3.0.6 and produced
+different per-tract counts than the same data processed locally with pandas 2.3.3. The
+difference was exactly the number of unlocated requests. The audit in section 1 checked raw
+counts on a random sample of 300 tracts, which did not include tract index 0.
+
+**Impact.** Every export produced under pandas 2.x carried the error. The Rikers Island tract
+displayed the mix of all unlocated requests (n = 110,486) instead of its own (n = 75). That
+one extreme child also distorted the fitted concentration parameters, moving other tracts
+slightly: across the other 2,324 tracts the largest change in any bin probability was 0.020,
+with a median of 0.004. Estimates at borough and citywide level were unaffected. The
+published data was replaced by a pandas 3.x rebuild on 2026-09-19.
+
+**Fix and verification.** The conversion now preserves missing values
+(`astype("object")`). Rebuilt under pandas 2.3.3, the export matches the pandas 3.0.6 runner
+output in 51,146 of 51,150 cells exactly, the remaining four differing by at most 0.001
+(rounding); all raw counts are identical. `pipeline/validate_export.py` now also requires the
+summed tract counts to equal the cleaning step's geocoded-request count (to 0.1%) and no
+single tract to hold more than 1% of requests; both checks fail on the affected export.
+
+**Not yet redone.** The prior comparison in `evaluation_results.md` was fitted on the earlier
+data window using the same conversion, so its training counts carry the same small distortion.
+It should be regenerated on the current window.

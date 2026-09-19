@@ -15,7 +15,8 @@ from datetime import date
 import numpy as np
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-WEB = os.path.join(ROOT, "web", "data")
+WEB = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "web", "data")
+FUNNEL = os.path.join(ROOT, "data", "funnel.json")
 
 MAX_AGE_DAYS = 50        # fetch END is today-31d, so data_through is ~31d old when fresh
 MIN_REQUESTS = 3_000_000  # two years is ~7M; far below this means a truncated pull
@@ -56,6 +57,20 @@ def main() -> None:
     check(bad_mono == 0, "cumulative probabilities monotone in all cells")
     check(bad_ci == 0, "interval bounds bracket the posterior mean in all cells")
     check(bad_sw == 0, "shrinkage weights within [0, 1]")
+
+    # Tract counts must add up to the requests the cleaning step actually geocoded. This
+    # catches unlocated requests being counted in a tract (e.g. NaN turned into the text
+    # "nan", which made ~110K no-tract requests pile into one tract under pandas 2).
+    tract_n = np.array([cells["ALL"]["n"] for cells in probs.values()])
+    if os.path.exists(FUNNEL):
+        expected = json.load(open(FUNNEL))["tract_assigned"]
+        rel = abs(int(tract_n.sum()) - expected) / expected
+        check(rel <= 0.001, f"tract counts match geocoded requests: {int(tract_n.sum()):,} vs {expected:,} ({rel:.2%} off)")
+    else:
+        check(False, "data/funnel.json present to cross-check tract counts")
+    top_share = tract_n.max() / m["n_requests"]
+    # coarse backstop (the real maximum is ~0.55%; the bug put 1.56% in one tract)
+    check(top_share <= 0.01, f"no single tract holds an implausible share of requests: max {top_share:.2%}")
 
     p24 = meta["refs"]["city"]["ALL"][1]
     check(0.30 <= p24 <= 0.80, f"citywide P(resolved within 24h) plausible: {p24:.3f}")

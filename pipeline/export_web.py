@@ -39,7 +39,9 @@ def main() -> None:
     geo_lookup = json.load(open(os.path.join(ROOT, "data", "geo_lookup.json")))
     df["created_date"] = pd.to_datetime(df["created_date"])
     for c in ["geoid", "nta", "boro", "complaint_type"]:
-        df[c] = df[c].astype(str)
+        # keep missing values missing: .astype(str) turns NaN into the string "nan" on pandas 2,
+        # which makes rows with no tract look geocoded (pandas 3 keeps them missing)
+        df[c] = df[c].astype("object")
     geo = M.GeoIndex(geo_lookup)
 
     # The named-type list is pinned in pipeline/types.json so weekly refreshes cannot
