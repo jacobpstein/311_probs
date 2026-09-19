@@ -340,7 +340,7 @@ plt.tight_layout(); plt.show()
 
 ```{python}
 #| label: tbl-current-adams
-#| tbl-cap: "Mamdani vs Adams — provisional: only ~5 months of matured 2026 data."
+#| tbl-cap: "Mamdani vs Adams — provisional: 2026 has fewer months of matured data than the other eras and lacks the autumn and early-winter months."
 #| code-summary: "Mamdani administration vs Adams (provisional)"
 delta_table(D_ca) if D_ca else "Too little 2026 data yet for tract-level comparison."
 ```
@@ -401,10 +401,10 @@ Findings that survive the composition and artifact controls:
    is exactly why the COVID window is quarantined and why the mix-adjusted row is
    the one to read.
 5. **The Mamdani administration's record is provisional** (@tbl-current-adams).
-   Zohran Mamdani took office in January 2026, succeeding Eric Adams, so this era is
-   only five months of matured data, seasonally unbalanced (winter/spring only), and best
-   treated as a baseline for future updates rather than a verdict — its lower heat
-   number vs Adams, for instance, reflects an all-winter sample.
+   Zohran Mamdani took office in January 2026, succeeding Eric Adams, so this era covers
+   only the months of 2026 that have matured, is missing the autumn and early-winter
+   months that every other era includes, and is best treated as a baseline for future
+   updates rather than a verdict.
 
 ## Why the live map still trains on recent data only
 
@@ -451,34 +451,43 @@ survival models (non-conjugate inference at 40M rows for a deliverable that is t
 binned distribution anyway); continuation-ratio Beta–Binomial stacks (equally
 conjugate but no actual adjacent-bin smoothing without breaking conjugacy — bin order
 is instead respected at evaluation time via the ranked probability score); and full
-hierarchical Bayes with sampled concentrations (intractable for monthly refresh; the
-parent nodes are so data-rich that empirical-Bayes plug-in loses little). Pooling runs
-within complaint type across geography, not across types within a tract, because
-resolution speed is owned by the responsible agency, not the neighborhood.
+hierarchical Bayes with sampled concentrations (too slow for a weekly refresh of every
+cell). The plug-in shortcut was then checked against a fully Bayesian Stan fit for one
+borough and three complaint types: tract means differ by 0.7–1.1 points on average
+(`docs/stan_validation.md`). Pooling runs within complaint type across geography, not
+across types within a tract, because resolution speed is owned by the responsible agency,
+not the neighborhood.
 
 ### Configuration contest (live map)
 
-Eight configurations were compared on a strict temporal holdout (train 2025-01 →
-2026-01, test 2026-01 → 2026-06; all hyperparameters fit on train only), scored by
-mean RPS (primary), log-loss, calibration error, and interval coverage, with paired
-block-bootstrap SEs over tract×type cells:
+Nine configurations were compared on a temporal holdout (train 2024-08 → 2025-08,
+test the following 12 months; all hyperparameters fit on train only), scored by mean RPS
+(primary), log-loss, calibration error, and interval calibration, with paired
+block-bootstrap SEs over tract×type cells (`docs/evaluation_results.md`):
 
-| configuration | RPS | verdict |
+| configuration | RPS | vs. best |
 |---|---|---|
-| No pooling (uniform / Jeffreys) | 0.1096 / 0.1086 | collapse to log(9) log-loss on unseen cells |
-| Hierarchy, fixed κ=15 | 0.1074 | pooling helps even hand-tuned |
-| Hierarchy, EB κ (per type / per type-level) | 0.1070 / 0.1070 | learned pooling |
-| **+ 90-day decay (shipped)** | **0.1064** | best; advantage concentrated in near-term months |
-| + 180-day / 365-day decay | 0.1067 / 0.1068 | longer memory loses |
+| No pooling (uniform / Jeffreys) | 0.10685 / 0.10548 | +0.00395 / +0.00258 |
+| Hierarchy, fixed κ=15 | 0.10365 | +0.00075 |
+| Hierarchy, EB κ (per type / per type-level) | 0.10316 / 0.10318 | +0.00026 / +0.00028 |
+| **+ 90-day decay (shipped)** | **0.10302** | +0.00012 |
+| + 180-day / 365-day decay | 0.10290 / 0.10297 | best / +0.00007 |
 
 The no-pooling baselines' failure mode is exact and diagnostic: on tract×type cells
 unseen in training they predict the bare prior — uniform over nine bins, log-loss
-log(9) = 2.197 — while the hierarchy falls back to the neighborhood estimate (~1.44).
+log(9) = 2.197 — while the hierarchy falls back to the neighborhood estimate (1.73–1.88).
 
-### Two defects found by audit, both fixed
+This single split trains once and predicts up to a year ahead, which favors long memory
+and is not how the map is used; the weekly-refit setting is tested by a rolling-origin
+evaluation that refits at each month start and scores only that month
+(`docs/rolling_evaluation.md`). There, half-lives of 45 to 180 days are statistically
+tied with the shipped 90 days (differences of 0.00000 to +0.00004 RPS), 365 days is worse
+by 0.00014 ± 0.00005, and no decay by 0.00040 ± 0.00008, so 90 days stays.
 
-An adversarial computational audit (independent re-implementation of the cascade;
-verification of all 51,150 exported cells) found:
+### Defects found by audit, all fixed
+
+Adversarial computational audits (independent re-implementation of the cascade;
+verification of every exported cell against the raw files) found:
 
 1. **Concentration estimation under-converged.** Minka's fixed-point iteration stalled
    far short of the marginal-likelihood optimum on these flat surfaces (tract-level
@@ -487,39 +496,58 @@ verification of all 51,150 exported cells) found:
    Dirichlet–Multinomial marginal likelihood by bounded scalar optimization.
    Predictions moved negligibly (the flat surface is why the defect was silent), but
    pooling strengths are now genuine MLEs — including the era fits above.
-2. **Raw posterior intervals badly under-covered.** At nominal 90%, dense-cell
-   coverage of realized near-future rates was 0.25–0.51 — including on an even/odd
+2. **Raw posterior intervals badly under-covered.** In the original audit, coverage of
+   nominal 90% intervals on dense cells was 0.25–0.51 — including on an even/odd
    day-of-year split where drift is impossible by construction, refuting an initial
-   "temporal drift" explanation. Real request outcomes are correlated within cells
-   (repeat reports, batch closures, day-of-week structure) and the service regime
-   itself moves. The live map's intervals now add a per-type, per-threshold regime
-   variance estimated from rolling 60-day temporal holdouts: backtest coverage
-   0.90–0.92, fully out-of-sample check 0.87. A multiplicative (design-effect)
-   correction was tested and rejected — it absurdly inflates sparse-cell intervals;
-   the additive form leaves them sampling-dominated.
+   "temporal drift" explanation. The live map's intervals now add a per-type,
+   per-threshold regime variance estimated from rolling 60-day temporal holdouts; on the
+   current data, coverage is 0.908 in dense cells and about 0.90 in sparse ones
+   (squared standardized residual 1.14). A multiplicative (design-effect) correction was
+   tested and rejected — it absurdly inflates sparse-cell intervals. Why the even/odd-day
+   shortfall occurred (correlated outcomes within cells is the working hypothesis) has
+   not been tested directly.
+3. **Requests without a tract were counted in one tract.** Under pandas 2, converting the
+   tract column with `astype(str)` turned missing values into the text "nan", so about
+   1.6% of requests were counted in Rikers Island (tract 36005000100); pandas 3 keeps them
+   missing, so the result depended on the installed version. Fixed, verified across
+   versions, and guarded by export checks (`docs/statistical_review.md` §7). The era fits
+   in this report were not affected: they load the data with their own null handling.
+4. **Interval theory ignored the uncertainty of the borrowed neighborhood mean.** A
+   simulation with known truth showed 43–81% coverage for nominal 90% intervals even when
+   the data follow the model exactly; the interval variance now includes that term
+   (`docs/simulation_check.md`). On real data the regime variance dominates, so users see
+   almost no change.
 
 ### Sensitivity and robustness checks run
 
-- **Decay half-life**: 90/180/365-day variants scored month-by-month; the 90-day
-  advantage decays over the forecast horizon exactly as a drift-tracking
-  interpretation predicts (and motivates the monthly refresh cycle).
+- **Decay half-life**: rolling-origin comparison over 11 monthly refits (see above);
+  45–180 days are tied, 365 days and no decay are worse.
 - **Seasonal blending**: a same-season-last-year kernel (conjugate, weight
-  β·2^(−|age−1yr|/bw)) was evaluated under a rolling-monthly protocol mirroring
-  deployment. Best variant: ΔRPS −0.00001 ± 0.00008 vs recency-only — a null — with
-  heavier blends slightly worse. Not adopted; scheduled for re-test once ≥2 full years
-  of history exist (`pipeline/eval_seasonal.py`). This analysis's 16-year archive now
-  makes that re-test possible.
+  β·2^(−|age−1yr|/bw)) was re-tested with two years of history under the same rolling
+  protocol. The best variant improves RPS by 0.00013 ± 0.00004 and log-loss by
+  0.00176 ± 0.00038 but wins in only 5 of the 11 months, so it is not adopted
+  (`pipeline/eval_rolling.py`).
+- **Pooling strength per threshold**: fitting a separate strength for each cumulative
+  threshold improves held-out log-loss slightly at all eight thresholds, but is mixed by
+  type and marginal for the all-complaints view; not adopted (`docs/cutwise_evaluation.md`).
+  This bears on this report: the tract-level era comparisons use the nine-bin pooling, so
+  for types where that over-pools the 24-hour rate, tract-level changes between eras are
+  understated (conservative), not overstated.
 - **Censoring**: the 31-day maturity cutoff is keyed to the top bin boundary, making
   the "still open ⇒ month+" assignment deductively exact rather than imputed;
-  verified against pull dates. Composition of the month+ bin was audited: 8.8% of
-  matured requests land there, 28.5% of those never close; for Heat/Hot Water >99% of
-  month+ cases are administrative non-closures — reported as-is with a
-  high-open-share flag.
-- **Cleaning funnel** (live window): 5.34M → 5.04M rows; ~188k double-submissions
-  collapsed, ~97k exact-zero durations dropped, ~85k batch closures flagged and
-  *kept* (dropping them would optimistically bias slow agencies). A full evaluation
-  re-run excluding batch-flagged records remains open; for this document their
+  verified against pull dates. Composition of the month+ bin was audited on the original
+  window: 8.8% of matured requests land there, 28.5% of those never close; for
+  Heat/Hot Water >99% of month+ cases are administrative non-closures — reported as-is
+  with a high-open-share flag.
+- **Cleaning funnel** (current live window): 7.52M → 7.08M rows; about 286k
+  double-submissions collapsed, 131k exact-zero durations dropped, 114k batch closures
+  flagged and *kept* (dropping them would optimistically bias slow agencies). A full
+  evaluation re-run excluding batch-flagged records remains open; for this document their
   per-era rates are disclosed in the era context table instead.
+- **Independent audit** (`pipeline/audit.py`): raw rows reconcile with the funnel; every
+  tract × type count matches an independent tally; binning is correct at the bin
+  boundaries; a separate re-implementation of the cascade reproduces all 51,150 cells; and
+  one month recomputed from the raw files agrees with the pipeline to 0.1 point.
 - **RPS implementation** verified against hand computation; bootstrap resamples
   cells, not requests (within-cell correlation would otherwise understate SEs).
 
@@ -543,20 +571,20 @@ verification of all 51,150 exported cells) found:
   out of both adjacent administrations' records.
 - **Known residual risks**: geocoding coverage drift (86% → 98% tract-mappable);
   recorded-vs-experienced resolution; single-observation seasonality in the
-  five-month Mamdani era (2026).
+  partial-year Mamdani era (2026), which lacks autumn and early winter.
 
 ### Reproduction
 
 ```
-python3 pipeline/fetch_311.py            # live window (2025-)
+python3 pipeline/fetch_311.py            # rolling two-year window
 python3 pipeline/fetch_311_history.py    # 2010-2024 archive (~38M rows)
 python3 pipeline/prepare.py && python3 pipeline/prepare_hist.py --all
 quarto render docs/historical_analysis.qmd
 ```
 
-Full machine-generated detail: `docs/model_spec.md` (specification),
-`docs/evaluation_results.md` (configuration contest), `docs/statistical_review.md`
-(audit), `docs/METHODS.md` (public methods).
+Full detail: `docs/model_spec.md` (specification), `docs/evaluation_results.md` and
+`docs/rolling_evaluation.md` (evaluation), `docs/statistical_review.md` (audits),
+`docs/METHODS.md` (public methods).
 
 ---
 

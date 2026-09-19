@@ -185,6 +185,61 @@ output in 51,146 of 51,150 cells exactly, the remaining four differing by at mos
 summed tract counts to equal the cleaning step's geocoded-request count (to 0.1%) and no
 single tract to hold more than 1% of requests; both checks fail on the affected export.
 
-**Not yet redone.** The prior comparison in `evaluation_results.md` was fitted on the earlier
-data window using the same conversion, so its training counts carry the same small distortion.
-It should be regenerated on the current window.
+**Follow-up.** The prior comparison in `evaluation_results.md` was regenerated on the current
+window with the corrected loader (section 8).
+
+---
+
+## 8. Follow-up audit (2026-09)
+
+**Scope.** Prompted by the missing-tract bug, every exported cell was checked against the raw
+files (not a sample), the cascade was re-implemented independently, the model was tested
+against simulated data with known truth and against a fully Bayesian Stan fit, and the
+candidate improvements listed in section 6 were evaluated with a rolling-origin protocol that
+matches how the map is refreshed. Scripts: `pipeline/audit.py`, `sim_check.py`,
+`stan_check.py`, `eval_rolling.py`, `eval_cutwise.py`; results in `docs/`.
+
+**Independent audit (`audit.py`) — all checks pass.** Raw rows reconcile with the cleaning
+funnel; tract × type counts match an independent tally in all 51,150 cells; the duration
+binning is correct at the bin boundaries; the likelihood used for the pooling strengths
+differs from SciPy's Dirichlet–Multinomial only by a constant in κ; a separate
+implementation (own count accumulation, own grid search for κ) reproduces the posterior bin
+probabilities, shrinkage weights and citywide profiles in all cells (max difference 0.0005,
+the export rounding); and one month recomputed straight from the raw CSVs agrees with the
+pipeline to 0.1 point once the duplicate handling is applied (the raw figure moves by +0.5
+points from duplicate handling alone).
+
+**Findings that change earlier statements.**
+
+1. *The plug-in approximation is not immaterial in theory.* With data generated exactly from
+   the model, nominal 90% intervals covered the true tract value in 43–81% of tracts, because
+   they ignore the uncertainty of the neighborhood mean a tract borrows (`simulation_check.md`).
+   Section 6 item 2 called this immaterial; that is true for the shipped intervals on real
+   data for most types (the fitted regime variance, median 0.09, dwarfs the parent term, median SD
+   0.008 in sparse cells), but not for types with no regime variance: 1,575 Noise - Commercial
+   cells had 24-hour intervals of about ±0.007 that are now up to 0.145 wide. The interval
+   variance now includes the term.
+   The plug-in means themselves are close to a full-Bayes fit: 0.7–1.1 points on average in
+   Brooklyn for three types (`stan_validation.md`).
+2. *The tract-level pooling strength is biased.* In simulation the estimator overstates it by
+   45% or more (true 100, 300, 1,500; estimated 145, 705, and the 5,000 ceiling), so
+   values pinned at the ceiling do not show that a type has no tract-level signal. Tract-level
+   accuracy is unaffected by this bias in simulation.
+3. *The single-split evaluation favored long memory.* Its lowest RPS moved to the 180-day
+   half-life on the new window, but that protocol predicts up to a year ahead. In the
+   rolling-origin evaluation that matches deployment, half-lives of 45–180 days are tied and
+   the shipped 90 days stays (365 days and no decay are worse).
+4. *The interval calibration holds in sparse cells.* For tract × type cells with under 30
+   training requests and at least 10 test requests, the squared standardized residual is 1.14
+   and 90.2% fall inside their interval; dense cells are 0.78 and 94%.
+
+**Candidates evaluated and not adopted.** Same-season-last-year blending (RPS −0.00013, wins
+5 of 11 months); a sibling-only prior (no predictive gain); a separate pooling strength per
+threshold (log-loss better at all eight thresholds by 0.06–0.32%, marginal for the
+all-complaints view, worse for some types; `cutwise_evaluation.md`). The last is the only
+candidate with a consistent, if small, gain and would need a new model class; it is documented
+as an option.
+
+**Still open.** Whether correlated outcomes within cells explain the dense-cell interval
+shortfall found in section 3; calibration for the six types with almost no regime variance;
+a repeat of the batch-closure sensitivity from section 6 item 4.

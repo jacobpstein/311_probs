@@ -6,14 +6,19 @@
 **Status:** methodology specification (v1.0). No production code here; §9 gives the
 implementable pseudocode.
 
-**Revision note (post-audit).** Two changes relative to this spec are shipped, both
-documented in [statistical_review.md](statistical_review.md): (1) κ is estimated by
+**Revision note (post-audit).** Six changes relative to this spec are shipped, documented in [statistical_review.md](statistical_review.md): (1) κ is estimated by
 bounded maximization of the exact DM marginal likelihood rather than the Minka fixed
 point of §2.1, which under-converged on flat likelihood surfaces; (2) the exact Beta
 credible intervals of §1.3 are widened by a per-(type, cut) additive regime variance
 estimated from rolling temporal holdouts — the coverage diagnostic of §7.2 exposed
-material under-coverage that parent-uncertainty propagation alone would not fix.
-Everything else (hierarchy, censoring, hygiene, evaluation design) ships as specified.
+material under-coverage that parent-uncertainty propagation alone would not fix;
+(3) the interval variance adds the uncertainty of the neighborhood mean a tract borrows,
+`(κ/A)² · Var(parent)`; (4) the complaint-type list is pinned in `pipeline/types.json` rather
+than re-derived, per §6.10; (5) production refits the whole model every week on a rolling
+two-year window instead of the incremental update of §8, which is not implemented; and (6) the
+decay half-life is confirmed with a rolling-origin evaluation (§7.1's single split favors long
+memory). See `statistical_review.md` §8. Everything else (hierarchy, censoring, hygiene) ships
+as specified.
 
 ---
 

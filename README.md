@@ -17,18 +17,26 @@ Mamdani administration.
   - `prepare.py`            Cleaning, tract point-in-polygon, censoring, 9-bin durations
   - `prepare_hist.py`       Same cleaning applied year-by-year to the historical pulls
   - `model.py`              Hierarchical Dirichlet-Multinomial cascade, EB concentration, interval calibration
-  - `evaluate.py`           Prior comparison (P0–P5c) with temporal holdout
-  - `eval_seasonal.py`      Rolling-monthly test of same-season-last-year blending (not adopted)
-  - `export_web.py`         Fit winning config, export web/data payload + geometry + update state
-  - `validate_export.py`    Sanity gate on the export (freshness, volume, invariants); blocks publishing on failure
-  - `update.py`             Incremental monthly decay-then-add update
+  - `types.json`            Pinned complaint-type list (everything else is grouped as "Other")
+  - `export_web.py`         Fit the shipped model, export the web/data payload and geometry
+  - `validate_export.py`    Sanity gate on the export (freshness, volume, tract counts, invariants); blocks publishing on failure
+  - `audit.py`              Independent end-to-end audit: raw files → export, every cell, with its own re-implementation of the cascade
+  - `evaluate.py`           Single-split prior comparison (P0–P6a)
+  - `eval_rolling.py`       Rolling-origin comparison (refit monthly, score the next month): decay half-life, seasonal blending
+  - `eval_cutwise.py`       Separate pooling strength per threshold vs the nine-bin model (tested, not adopted)
+  - `sim_check.py`          Simulation of the cascade against known truth: accuracy and interval coverage
+  - `stan_check.py`         Full-Bayes check of the cascade in Stan (needs CmdStan and `cmdstanpy`); program in `stan/hier_dm.stan`
 - `web/`  — static MapLibre single-page app (open via any static server)
 - `docs/`
   - `METHODS.md`               Layered plain-language + technical methods writeup
   - `model_spec.md`            Full model specification
   - `design_spec.md`           UI/UX specification
-  - `evaluation_results.md`    Prior comparison results and interpretation
-  - `statistical_review.md`    Adversarial audit that motivated the estimator and interval fixes
+  - `evaluation_results.md`    Single-split results, generated, with interpretation from `evaluation_notes.md`
+  - `rolling_evaluation.md`    Rolling-origin results (generated)
+  - `simulation_check.md`      Simulation results (generated)
+  - `stan_validation.md`       Stan comparison results (generated)
+  - `cutwise_evaluation.md`    Cutwise-vs-nine-bin results (generated)
+  - `statistical_review.md`    Adversarial audits and the corrections they led to
   - `historical_analysis.qmd`  Reproducible Quarto writeup: resolution odds across administrations (renders to `.html`)
 
 ## Run the pipeline

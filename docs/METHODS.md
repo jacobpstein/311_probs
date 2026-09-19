@@ -2,7 +2,7 @@
 
 The whole method in one paragraph:
 
-> We took roughly five million 311 service requests, measured how long each one took to
+> We took about seven million 311 service requests, measured how long each one took to
 > close, and sorted those durations into nine buckets (under 3 hours, same day, next day,
 > and so on out to "more than a month"). For every neighborhood and every kind of complaint,
 > we estimated the chance a new request lands in each bucket. Because some blocks have
@@ -58,15 +58,15 @@ still leaves enough data per unit to say something meaningful.
 `erm2-nwe9`). We pull the fields `created_date`, `closed_date`, `complaint_type`,
 `descriptor`, `agency`, `status`, `borough`, and `latitude`/`longitude`.
 
-**Window.** All requests created between **2025-01-01 and 2026-06-03** — about
-**5.34 million** requests. The end date is deliberately ~31 days before the data pull; §4
-explains why.
+**Window.** A rolling two-year window of requests (currently created between **2024-08-19 and
+2026-08-18**), about **7.5 million** before cleaning. The window ends 31 days before the data
+pull, for the reason given in §2.2, and moves forward with every weekly refresh.
 
 **Geography.** Each request's latitude/longitude is assigned to a 2020 census tract by
 point-in-polygon test against the city's official tract boundaries. Tracts roll up into
 **Neighborhood Tabulation Areas** (NTAs, ~260 of them), which roll up into **boroughs** (5),
 which roll up into the **city** (1). This four-level hierarchy is the backbone of the model
-(§5). 98.3% of requests carry usable coordinates; the rest are kept only at the borough/city
+(§5). about 98% of requests carry usable coordinates; the rest are kept only at the borough/city
 level, where they still inform the estimates.
 
 ### 2.1 Cleaning ("data hygiene")
@@ -93,8 +93,9 @@ Rules, applied in order (the row count after each is logged to `data/funnel.json
    large spike of cases (> max(500, 20% of that agency's median daily closures)). Keeping
    them is the honest choice: the recorded closure is what the requester experienced.
 
-For this run the funnel was: **5.34M → 5.04M** kept, with ~188k double-submissions, ~97k
-exact-zero durations, and ~85k batch-closure flags. The full table is in
+For the current window the funnel was: **7.52M → 7.08M** kept, with about 286k
+double-submissions collapsed, 131k exact-zero durations dropped, and 114k batch-closure flags.
+The full table is in
 [evaluation_results.md](evaluation_results.md).
 
 ### 2.2 Right-censoring: only judging requests old enough to have an outcome
@@ -192,12 +193,13 @@ Everything the app shows is then closed-form from `a_tract` (with `A = Σ a`):
 
 - **Posterior mean** for each bin: `aₖ / A` — the probabilities on the ladder.
 - **Cumulative** "within X": partial sums of those means — the map metric.
-- **Uncertainty**: the soft "faded bar ends" in the panel are 90% intervals built from two
+- **Uncertainty**: the soft "faded bar ends" in the panel are 90% intervals built from three
   variance components: the Dirichlet posterior's **sampling variance** (a standard closed
-  form), plus a per-type **regime variance** estimated from rolling temporal holdouts —
-  because a cell's realized near-future rate moves with seasonality and agency behavior,
-  not just sampling noise (§6.1 shows why this second component is essential, not optional).
-  Half-width = 1.645·√(sampling + regime²).
+  form); the **uncertainty of the neighborhood mean** the tract borrows, weighted by how much
+  of the estimate is borrowed, `(κ/A)² × Var(parent)`; and a per-type **regime variance**
+  estimated from rolling temporal holdouts — because a cell's realized near-future rate moves
+  with seasonality and agency behavior, not just sampling noise (§6.1 shows why this
+  component is essential). Half-width = 1.645·√(sampling + (κ/A)²·parent + regime²).
 - **Shrinkage weight** `λ = n / (n + κ₃)` ∈ [0, 1]: the share of the estimate that comes
   from *this tract's own data* versus the borrowed neighborhood pattern.
 
@@ -219,93 +221,115 @@ iteration was tried first and quietly converged far short of the optimum on thes
 likelihood surfaces (checked against a direct likelihood grid), systematically
 under-pooling — direct bounded maximization is just as cheap here and exact.
 
-The learned κ's are interpretable and vary sensibly by complaint type: strong pooling where
-resolution speed is uniform within a neighborhood, weaker where there is genuine
-block-to-block variation, and very large κ for spatially smooth types — the model correctly
-saying "there is essentially no tract-level signal here beyond the neighborhood." The full
-κ table is in [evaluation_results.md](evaluation_results.md).
+The learned κ's vary by complaint type: strong pooling where resolution speed is uniform
+within a neighborhood, weaker where there is genuine block-to-block variation. Very large
+values (several types sit at the 5,000 ceiling at the tract level) should not be read as
+proof of "no tract-level signal": in simulations with known truth this estimator overstates
+the tract-level strength by 45% or more (§6.2), and one strength shared across all nine bins
+is dominated by the many quiet bins (§7.1). The full κ table is in
+[evaluation_results.md](evaluation_results.md).
 
 ### 4.5 An honest note on the approximation
 
-The cascade plugs in each parent's *mean* rather than propagating full parent uncertainty
-downward. This is the standard, defensible trade for tractability: parent nodes aggregate
-thousands to millions of requests, so their means are pinned down tightly, and the uncertainty
-that actually matters — the spread at a thin tract cell — is retained exactly. A 200-draw
-refinement that propagates parent uncertainty is specified and available if calibration
-diagnostics ever demand it (§6 shows they didn't warrant it here).
+The cascade plugs in each parent's *mean* instead of sampling it. Two checks show how much
+that matters. First, it ignores the uncertainty of the neighborhood mean a tract borrows,
+which by itself makes the Dirichlet intervals too narrow when pooling is strong (43–81%
+coverage for nominal 90% intervals in simulations that follow the model exactly), so the
+interval variance includes the analytic term in §4.3. Second, against a fully Bayesian fit in
+Stan that samples both concentrations and the neighborhood distributions, the plug-in tract
+means differ by 0.7–1.1 points on average (§6.2). Neither moves a typical tract by more than
+about a point.
 
 ---
 
-## 5. Keeping estimates fresh — time decay and updating
+## 5. Keeping estimates fresh — time decay and weekly refits
 
-> The city changes: agencies get faster or slower, policies shift,
-> seasons turn. So we let recent requests count for more than old ones — a request from last
-> month carries more weight than one from a year ago. And when a new month of data arrives,
-> we don't refit from scratch; we gently "age" the existing counts and add the new ones. Today's
-> answer becomes tomorrow's starting point.
+> The city changes: agencies get faster or slower, policies shift, seasons turn. So recent
+> requests count for more than old ones — a request from last month carries more weight than
+> one from a year ago. And the whole model is rebuilt from the latest data every week, so the
+> map never drifts far from what has just happened.
 
 **Time decay.** Each request contributes a weight `2^(−age / h)` with **half-life h = 90 days**
-(a request 90 days old counts half as much as a brand-new one). This value was chosen
-empirically (§6), not by hand.
+(a request 90 days old counts half as much as a brand-new one). The value was chosen
+empirically (§6): the rolling-origin test finds half-lives from 45 to 180 days statistically
+indistinguishable, and clearly worse results at 365 days and with no decay at all.
 
-**Incremental update.** Because matured requests never change bins (§2.2), updating
-is a single conjugate step — "decay-then-add":
-
-```
-ñ ← ñ · 2^(−Δ/h)  +  (decay-weighted counts of the newly matured cohort)
-```
-
-then re-run the O(cells) cascade with the stored κ table. Concentrations are re-estimated only
-on a quarterly full refit. This is formally an exponential-forgetting / power-prior filter — we
-label it as such rather than overselling it as exact dynamic Bayes. The recipe lives in
-[`pipeline/update.py`](../pipeline/update.py) and [model_spec.md §8](model_spec.md).
+**Refresh.** A scheduled job (`.github/workflows/refresh-data.yml`) pulls a rolling two-year
+window every week, refits the entire model — concentrations, interval calibration and
+per-type regime variances included — validates the export
+([`pipeline/validate_export.py`](../pipeline/validate_export.py)), and publishes only if every
+check passes. A full refit takes minutes, so nothing is carried between runs and there is no
+incremental state to go stale. The map lags real time by about 31 days because a request has
+to be that old for its outcome to be known (§2.2). The complaint-type list is pinned in
+[`pipeline/types.json`](../pipeline/types.json), so a refresh cannot silently add or drop a
+type when a borderline or seasonal one crosses the top-20 line.
 
 ---
 
-## 6. How we know it works — testing the priors
+## 6. How we know it works
 
-> We didn't just pick a method and hope. We built eight versions —
-> from a dumb baseline that ignores the neighborhood entirely, up to the full model with
-> learned blending and time decay — and staged a fair contest: train each on the first year
-> of data, then see which best predicts what *actually* happened in the following five months,
-> on requests it had never seen. The full model won, decisively, and the time-decay versions
-> won among those. We report the whole scoreboard, including where the model is weakest.
+> We didn't just pick a method and hope. We built nine versions — from a baseline that ignores
+> the neighborhood entirely, up to the full model with learned blending and time decay — and
+> tested each on requests it had never seen. Letting thin blocks borrow from their neighborhood
+> matters a great deal; giving recent data more weight helps, but the exact amount barely
+> matters. Then we tried to break the model: with simulated data whose true answer we knew, and
+> by re-fitting it in a fully Bayesian way. Point estimates held up; the checks exposed real
+> problems with the theory behind the intervals and with how strongly the model pools, both
+> described below.
 
-**Protocol.** Train on requests created in the first 12 months; test on the ~5 months after.
-All settings (the κ's, the complaint-type list, the cleaning thresholds) are learned on the
-training period only — the test period is untouched until scoring.
+**Protocol.** Two tests. A single split trains on the first 12 months of the window and tests
+on the next 12. A rolling-origin test mirrors how the map is used: at the start of each of 11
+months, refit on everything earlier and score only that month. All settings (the κ's, the
+complaint-type list, the interval calibration) are learned on the training data only.
 
-**Scoring.** The headline metric is the **Ranked Probability Score (RPS)**, which is the right
-metric here because the bins are *ordered*: predicting "2–3 days" when the truth was "1 week"
-should be penalized less than predicting "3 hours." We also report multinomial **log-loss**,
-**calibration error** on the two headline claims ("within 24h" and "within 7d"), and
-**credible-interval coverage** — all broken out by how much training data each cell had
-(`n = 0`, `n < 30`, `n ≥ 30`), because the sparse cells are exactly where methods differ.
-Uncertainty on the comparison comes from a **block bootstrap over cells**.
+**Scoring.** The headline metric is the **Ranked Probability Score (RPS)**, the right metric
+here because the bins are *ordered*: predicting "2–3 days" when the truth was "1 week" should
+be penalized less than predicting "3 hours." We also report **log-loss**, **calibration
+error** on the "within 24h" and "within 7d" claims, and interval calibration — all broken out
+by how much training data each cell had (`n = 0`, `n < 30`, `n ≥ 30`), because the sparse
+cells are where methods differ. Uncertainty on every comparison comes from a **block
+bootstrap over tract × type cells**.
 
-**Result (lower RPS is better):**
+**Single split (lower RPS is better):**
 
 | Configuration | RPS | vs. best |
 |---|---|---|
-| No pooling, uniform prior (baseline) | 0.1096 | +0.0032 |
-| No pooling, Jeffreys prior | 0.1086 | +0.0022 |
-| Hierarchy, fixed blending | 0.1074 | +0.0010 |
-| Hierarchy, learned κ per type | 0.1070 | +0.0006 |
-| Hierarchy, learned κ per type & level | 0.1070 | +0.0006 |
-| **+ time decay, 90-day half-life (shipped)** | **0.1064** | **best** |
-| + time decay, 180-day half-life | 0.1067 | +0.0003 |
-| + time decay, 365-day half-life | 0.1068 | +0.0004 |
+| No pooling, uniform prior (baseline) | 0.10685 | +0.00395 |
+| No pooling, Jeffreys prior | 0.10548 | +0.00258 |
+| Hierarchy, fixed blending | 0.10365 | +0.00075 |
+| Hierarchy, learned κ per type | 0.10316 | +0.00026 |
+| Hierarchy, learned κ per type & level | 0.10318 | +0.00028 |
+| **+ time decay, 90-day half-life (shipped)** | **0.10302** | +0.00012 |
+| + time decay, 180-day half-life | 0.10290 | best |
+| + time decay, 365-day half-life | 0.10297 | +0.00007 |
+| + time decay, 90-day, sibling-only prior | 0.10300 | +0.00010 |
 
-> The two things that mattered most: (1) letting thin blocks borrow
-> from their neighborhood — the no-pooling baselines are visibly worse, and on blocks the
-> model had never seen they collapse to a useless "all outcomes equally likely" guess, while
-> the hierarchy still gives a sensible neighborhood-based answer; (2) weighting recent data
-> more. The winner does both.
+> The biggest effect by far is letting thin blocks borrow from their neighborhood: the
+> no-pooling baselines are clearly worse, and on blocks the model had never seen they collapse
+> to a useless "all outcomes equally likely" guess, while the hierarchy still gives a sensible
+> neighborhood-based answer.
 
-The clearest illustration is the sparse stratum: on cells with **no** training data, the
-no-pooling baselines score a log-loss of 2.197 — which is exactly `log(9)`, the score of a
-shrug that says every bin is equally likely — while the hierarchy scores ~1.44 by falling
-back to the neighborhood. That gap is the entire value proposition of the method.
+The clearest illustration is the sparse stratum: on tract × type cells with **no** training
+data, the no-pooling baselines score a log-loss of 2.197 — exactly `log(9)`, the score of a
+shrug that says every bin is equally likely — against 1.73–1.88 for the hierarchical models,
+which fall back to the neighborhood.
+
+**Which decay?** The single split cannot decide, and its ranking (180 days ahead of 90) is
+partly an artifact: it trains once and predicts up to a year ahead, which penalizes short
+memory, whereas the deployed map is refit weekly and only ever predicts the near future. The
+rolling-origin test is the one that matches deployment:
+
+| Half-life | RPS vs. shipped 90 days (± SE) |
+|---|---|
+| 45 days | +0.00003 ± 0.00004 |
+| 60 days | +0.00001 ± 0.00002 |
+| **90 days (shipped)** | — |
+| 120 days | +0.00000 ± 0.00001 |
+| 180 days | +0.00004 ± 0.00003 |
+| 365 days | +0.00014 ± 0.00005 |
+| none | +0.00040 ± 0.00008 |
+
+Decay matters; the value between 45 and 180 days does not, so 90 stays.
 
 ### 6.1 The uncertainty story: what the intervals had to learn the hard way
 
@@ -318,25 +342,67 @@ back to the neighborhood. That gap is the entire value proposition of the method
 > over a couple of months. Busy blocks now get honest ranges instead of falsely precise
 > ones, and quiet blocks are barely affected (their ranges were already wide).
 
-Technically, the raw Dirichlet intervals badly under-covered on dense cells, and stress
-tests showed drift alone doesn't explain it: coverage was ~0.44 on the cross-year backtest,
-still only ~0.51 on an **even/odd-day split** where drift is impossible by construction, and
-~0.25 against rolling next-60-day holdouts. The failures concentrate where sampling variance
-is tiny, so any systematic regime movement (seasonality, batch closures, policy shifts)
-lands outside the interval. The fix is a per-type, per-threshold **additive regime variance**
-σ estimated from rolling temporal holdouts inside the training window: interval half-width
-= 1.645·√(sampling variance + σ²). Additive rather than multiplicative, so sparse cells —
-whose intervals are dominated by sampling uncertainty — are only modestly widened. With this
-calibration, backtest coverage lands at 0.90–0.92 (in the guardrail), and a fully
-out-of-sample next-60-day check gives 0.87 — slightly under target because early 2026 moved
-more than anything in the calibration year. That residual is irreducible regime-shift risk;
-the monthly update cycle re-centers the model continuously. The 7-day calibration error
-(~0.02, marginally above the 0.02 guardrail) shares the same drift cause and the same
-mitigation. We report these numbers rather than tuning them away.
+Technically, the raw Dirichlet intervals badly under-covered on dense cells. In the original
+audit, coverage of nominal 90% intervals was about 0.44 on a cross-year backtest, still only
+about 0.51 on an **even/odd-day split** where drift is impossible by construction, and about
+0.25 against rolling next-60-day holdouts. The failures concentrate where sampling variance
+is tiny, so any systematic movement lands outside the interval. The fix is a per-type,
+per-threshold **additive regime variance** σ estimated from rolling temporal holdouts inside
+the training window: half-width = 1.645·√(sampling variance + σ²), additive rather than
+multiplicative so sparse cells are only modestly widened. On the current data, cells with at
+least 50 test requests are covered 90.8% of the time, and in sparse cells (fewer than 30
+training requests, at least 10 test requests) the squared standardized residual is 1.14 with
+90.2% of cells inside their interval, both close to the targets. The 7-day calibration error
+is 0.017. Whether the even/odd-day shortfall was caused by correlated outcomes within cells
+(repeat reports, batch closures) has not been tested directly.
 
-A second honest caveat, unchanged: for several complaint types the model finds no meaningful
-block-to-block difference and shows the neighborhood pattern everywhere — the correct answer
-when the signal isn't there (§7.1).
+### 6.2 Checking the approximation: simulation and a fully Bayesian fit
+
+> We generated fake data from the model itself, where the true answer is known, and checked
+> whether the model finds it. It does, for the estimates. The intervals were too narrow when
+> neighborhoods were tightly pooled, because they ignored how well the neighborhood's own
+> pattern is known. We fixed that, and then re-fit a simplified version of the model in Stan, a
+> tool that doesn't take any shortcuts, and confirmed the shortcut we use costs about a point.
+
+Simulation (`pipeline/sim_check.py`, [simulation_check.md](simulation_check.md)): data drawn
+from the hierarchical model with known concentrations, on the real geography and volumes.
+Tract-level accuracy is identical for every variant. Nominal 90% intervals covered the true
+tract value in only 81%, 63% and 43% of tracts in three scenarios of decreasing tract-level
+heterogeneity; adding the parent-uncertainty term brings coverage to 89–90% when the true
+concentrations are supplied, and 80–85% with estimated ones, because the estimator
+overstates the tract-level pooling (true 100, 300, 1,500; estimated 145, 705, and the 5,000
+ceiling). A sibling-only variant that removes the double-counting of a tract's own data in its
+parent mean errs the other way (76, 186, 533) and gives conservative intervals (92–96%). On
+real data the regime variance is much larger than the parent term for most types (median 0.09
+against a median SD of 0.008 in sparse cells), so the correction changes the median interval
+by about a tenth of a point; where the regime variance is zero (Noise - Commercial) it widened
+the intervals of sparse-neighborhood cells by up to 0.145, from about ±0.007.
+
+Stan (`pipeline/stan_check.py`, [stan_validation.md](stan_validation.md)): a hierarchical
+model in which both concentrations and the neighborhood distributions are sampled, fitted to
+Brooklyn's last 365 days for Heat/Hot Water, Street Condition and Water System on merged
+"within 24 hours / later" counts (a Dirichlet merged over categories is a Dirichlet with
+summed parameters). Recovery of known parameters from simulated data works (both
+concentrations inside their 99% intervals; 88.7% of tract intervals cover the truth), and the
+real-data fits are clean (no divergences, R̂ ≤ 1.008). Against a plug-in cascade on the same
+counts, the tract means differ by 0.7–1.1 points on average and the uncertainty ratio is
+1.01–1.11.
+
+### 6.3 Options tested and not adopted
+
+- **A separate pooling strength per threshold** ([cutwise_evaluation.md](cutwise_evaluation.md)).
+  The Stan fits found much weaker pooling of the 24-hour rate than the production model
+  (Street Condition, Brooklyn: tract κ ≈ 29 against the 5,000 ceiling). Fitting one
+  two-category hierarchy per threshold improves held-out log-loss at all eight thresholds
+  (by 0.06–0.32%, each at least 3 standard errors), but the gain is 2 standard errors at
+  the 24-hour threshold for the all-complaints view and vanishes beyond a week, and it is
+  mixed by type (worse for Snow or Ice at 24 hours and Street Condition at one week). Adopting
+  it would mean a new model class, a rule to keep cumulative probabilities monotone, and
+  per-threshold interval calibration.
+- **Same-season-last-year blending.** With two years of history the best variant improves RPS
+  by 0.00013 and log-loss by 0.0018 but wins in only 5 of 11 months.
+- **A sibling-only prior** (excluding a unit's own counts from its parent mean): no
+  measurable predictive gain.
 
 ---
 
@@ -348,7 +414,7 @@ when the signal isn't there (§7.1).
 | Big headline % | The same number for the selected tract, tracking the time scrubber |
 | Resolution-ladder bar length | Posterior-mean cumulative probability at each of the 8 thresholds |
 | Brighter cap on each bar | That bin's individual probability (the increment) |
-| Faded bar end | 90% interval: Dirichlet sampling variance + calibrated regime variance (§6.1) |
+| Faded bar end | 90% interval: sampling variance + uncertainty of the borrowed neighborhood mean + calibrated regime variance (§4.3, §6.1) |
 | "1 month+" row | The tail probability — chance it takes longer than a month |
 | Data-strength dots ●●● / ○○○ | Shrinkage weight λ = n/(n+κ): how much is local vs. borrowed |
 | "~" prefix and wider fades | Low-data cells, flagged for honesty |
@@ -368,12 +434,17 @@ computed in a way the data can't back up.
 > "Absolute / Relative" switch lets you see both stories.
 
 This is worth stating plainly because it's easy to misread. For high-volume, agency-scheduled
-types the tract-to-tract spread in the *raw* data is tiny — e.g., the middle 50% of Brooklyn
-tracts differ in their "resolved within 24h" rate for illegal parking by well under one
-percentage point — and the model faithfully reports that near-uniformity rather than
-inventing variation. The empirical-Bayes concentration for such types is correspondingly
-large (strong pooling), which the evaluation confirms is the right call. Types with genuine
-local structure (Heat/Hot Water, Dirty Condition) keep a visibly wider spread.
+types the tract-to-tract spread in the *raw* data really is tiny — e.g., the middle 50% of
+Brooklyn tracts differ in their "resolved within 24h" rate for illegal parking by well under
+one percentage point — so a nearly uniform map is the honest picture there. For other types
+there is a second effect to keep in mind: the model pools all nine duration bins with a single
+strength per type and level, and where the 24-hour rate varies a lot between tracts while the
+other bins barely do, that shared strength can over-pool the 24-hour rate. The Stan check put
+the tract-level pooling strength for Street Condition in Brooklyn near 29, against the 5,000
+ceiling in production. Fitting a separate strength per threshold reduces that pooling and
+improves held-out log-loss slightly overall, but not for every type and hardly at all for the
+all-complaints view (§6.3), so it has not been adopted. Types with genuine local structure
+(Heat/Hot Water, Dirty Condition) keep a visibly wider spread.
 
 Two consequences for reading the map:
 
@@ -393,10 +464,13 @@ Two consequences for reading the map:
 ## 8. Reproducing this
 
 ```
-python3 pipeline/fetch_311.py     # download the raw 311 pulls (one-time, large)
-python3 pipeline/prepare.py       # clean, assign tracts, bin durations
-python3 pipeline/evaluate.py      # run the eight-way prior contest (§6)
-python3 pipeline/export_web.py    # fit the winner, write the app's data
+python3 pipeline/fetch_311.py      # rolling two-year window of raw 311 data
+python3 pipeline/prepare.py        # clean, assign tracts, bin durations
+python3 pipeline/evaluate.py       # single-split prior comparison (§6)
+python3 pipeline/eval_rolling.py   # rolling-origin comparison: decay, seasonality (§6)
+python3 pipeline/export_web.py     # fit the shipped model, write the app's data
+python3 pipeline/validate_export.py  # checks the export before it is published
+python3 pipeline/audit.py          # independent end-to-end audit against the raw files
 python3 -m http.server 8012 --directory web   # open http://localhost:8012
 ```
 
