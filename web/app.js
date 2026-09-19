@@ -1,8 +1,11 @@
 'use strict';
 
 const RAMP = ['#440154','#414487','#2A788E','#22A884','#7AD151','#BDDF26','#FDE725'];
+// darker, text-safe twins of the bright ramp stops — used only where a class color
+// colors TEXT (headline stat, tooltip value); bright viridis is illegible on white.
+const RAMP_TEXT = ['#440154','#3B3E7E','#20697D','#177C5E','#4C8C1F','#6E7A10','#8A6D00'];
 const BREAKS = [0.20, 0.35, 0.50, 0.65, 0.80, 0.92];
-const NO_DATA = '#1A2030';
+const NO_DATA = '#DEE4EB';
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Scrubber stops = 8 cumulative thresholds (drive the map)
@@ -49,6 +52,11 @@ function classColor(p) {
   for (let i = 0; i < BREAKS.length; i++) if (p < BREAKS[i]) return RAMP[i];
   return RAMP[RAMP.length - 1];
 }
+function classColorText(p) {
+  if (p == null || isNaN(p)) return '#55607A';
+  for (let i = 0; i < BREAKS.length; i++) if (p < BREAKS[i]) return RAMP_TEXT[i];
+  return RAMP_TEXT[RAMP_TEXT.length - 1];
+}
 function lighten(hex, amt) {
   const n = parseInt(hex.slice(1), 16);
   let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
@@ -65,9 +73,11 @@ const map = new maplibregl.Map({
   style: {
     version: 8,
     sources: {
-      carto: { type: 'raster', tiles: ['https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}@2x.png'],
-        tileSize: 256, attribution: '© OpenStreetMap © CARTO' },
-      labels: { type: 'raster', tiles: ['https://basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}@2x.png'],
+      carto: { type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256, attribution: 'Basemap: Esri, HERE, Garmin, © OpenStreetMap contributors' },
+      labels: { type: 'raster',
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}'],
         tileSize: 256 },
     },
     layers: [{ id: 'carto', type: 'raster', source: 'carto' }],
@@ -114,15 +124,15 @@ async function boot() {
   }, 'carto');
   map.moveLayer('tract-fill');
   map.addLayer({ id: 'tract-line', type: 'line', source: 'tracts',
-    paint: { 'line-color': '#0B0E14', 'line-width': 0.5, 'line-opacity': 0.4 } });
+    paint: { 'line-color': '#8894A6', 'line-width': 0.5, 'line-opacity': 0.35 } });
   map.addLayer({ id: 'tract-glow', type: 'line', source: 'tracts',
     paint: { 'line-blur': 4, 'line-width': 2,
-      'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FFB84D', '#FFFFFF'],
+      'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#E8890C', '#2B3444'],
       'line-opacity': ['case', ['any', ['boolean', ['feature-state', 'hover'], false],
         ['boolean', ['feature-state', 'selected'], false]], 0.9, 0] } });
   map.addLayer({ id: 'tract-hover-line', type: 'line', source: 'tracts',
     paint: { 'line-width': 1.5,
-      'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FFB84D', '#FFFFFF'],
+      'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#E8890C', '#2B3444'],
       'line-opacity': ['case', ['any', ['boolean', ['feature-state', 'hover'], false],
         ['boolean', ['feature-state', 'selected'], false]], 0.85, 0] } });
   map.addLayer({ id: 'labels', type: 'raster', source: 'labels' });
@@ -361,7 +371,7 @@ function updateHeadline(c, cum, strength, animate) {
   const cIdx = THRESHOLDS[state.thr].cum;
   const val = cum[cIdx];
   const numEl = document.getElementById('stat-number');
-  numEl.style.color = classColor(val);
+  numEl.style.color = classColorText(val);
   const prefix = strength <= 0 && c.n < 25 ? '~' : '';
   if (animate) countUp(numEl, val, prefix); else numEl.textContent = prefix + pct(val);
   document.getElementById('stat-caption').textContent =
@@ -535,12 +545,13 @@ function showTooltip(e, id) {
   const cum = cumsum(c.bp); const cIdx = THRESHOLDS[state.thr].cum;
   const v = cum[cIdx], lo = c.lo[cIdx], hi = c.hi[cIdx];
   if (!tip) { tip = document.createElement('div'); tip.id = 'tooltip'; document.body.appendChild(tip);
-    Object.assign(tip.style, { position: 'fixed', maxWidth: '240px', background: 'rgba(26,32,48,0.92)',
-      backdropFilter: 'blur(8px)', border: '1px solid #2A3244', borderRadius: '8px',
+    Object.assign(tip.style, { position: 'fixed', maxWidth: '240px', background: 'rgba(255,255,255,0.96)',
+      backdropFilter: 'blur(8px)', border: '1px solid #D3DAE3', borderRadius: '8px',
+      boxShadow: '0 8px 24px rgba(23,37,64,0.16)',
       padding: '10px 12px', pointerEvents: 'none', zIndex: 40, fontSize: '12px' }); }
-  tip.innerHTML = `<div style="font-weight:600;color:#F2F4F8;margin-bottom:3px">Tract ${tractLabel(id)} · ${feat.properties.nta}</div>
-    <div style="font-size:13px;font-weight:700;color:${classColor(v)}">${pct(v)} chance resolved within ${THRESHOLDS[state.thr].long}</div>
-    <div style="font-size:11px;color:#5C6577;margin-top:3px">Plausible range ${pct(lo)}–${pct(hi)} · ${c.n.toLocaleString()} requests</div>`;
+  tip.innerHTML = `<div style="font-weight:600;color:#1A2230;margin-bottom:3px">Tract ${tractLabel(id)} · ${feat.properties.nta}</div>
+    <div style="font-size:13px;font-weight:700;color:${classColorText(v)}">${pct(v)} chance resolved within ${THRESHOLDS[state.thr].long}</div>
+    <div style="font-size:11px;color:#95A0B2;margin-top:3px">Plausible range ${pct(lo)}–${pct(hi)} · ${c.n.toLocaleString()} requests</div>`;
   let x = e.originalEvent.clientX + 14, y = e.originalEvent.clientY + 14;
   if (x > window.innerWidth - 250) x = e.originalEvent.clientX - 250;
   tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.style.display = 'block';
