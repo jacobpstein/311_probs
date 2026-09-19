@@ -6,7 +6,7 @@ that month's requests only. This measures near-term prediction - the deployed
 setting - unlike the single 12-month-ahead split in evaluate.py, which penalizes
 short-memory (fast-decay) configurations on the later test months.
 
-Compares decay half-lives and same-season-last-year blending, reports overall and
+Compares the shipped cutwise model with the nine-bin cascade, decay half-lives and same-season-last-year blending, reports overall and
 per-month RPS / log-loss, and a paired block bootstrap (over tract x type cells)
 of each config's RPS difference from the shipped reference.
 
@@ -23,13 +23,16 @@ import pandas as pd
 import model as M
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-REFERENCE = "h=90d (shipped)"
+REFERENCE = "cutwise h=90d (shipped)"
 MIN_TRAIN_DAYS = 365          # only score months with at least this much history
 
 CONFIGS = [
     M.Config("h=45d", half_life_days=45.0),
     M.Config("h=60d", half_life_days=60.0),
-    M.Config(REFERENCE, half_life_days=90.0),
+    M.Config("h=90d", half_life_days=90.0),
+    M.Config(REFERENCE, half_life_days=90.0, cutwise=True),
+    M.Config("cutwise h=180d", half_life_days=180.0, cutwise=True),
+    M.Config("cutwise h=45d", half_life_days=45.0, cutwise=True),
     M.Config("h=120d", half_life_days=120.0),
     M.Config("h=180d", half_life_days=180.0),
     M.Config("h=365d", half_life_days=365.0),
@@ -58,9 +61,9 @@ def score(fm, sub, geo, tix):
     ok = gi.notna().to_numpy()
     gi = gi.fillna(0).astype(int).to_numpy()
     a = np.empty((len(sub), M.K))
-    a[ok] = fm.a_tract[gi[ok], ti[ok]]
+    a[ok] = fm.bin_probs_tract()[gi[ok], ti[ok]]
     bi = sub["boro"].map(geo.boro_ix).fillna(0).astype(int).to_numpy()
-    a[~ok] = fm.a_boro[bi[~ok], ti[~ok]]
+    a[~ok] = fm.bin_probs_boro()[bi[~ok], ti[~ok]]
     p = a / a.sum(1, keepdims=True)
     P = p.cumsum(1)
     y = sub["bin"].to_numpy()

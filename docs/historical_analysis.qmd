@@ -251,15 +251,14 @@ fits, counts = {}, {}
 for key in era_keys:
     sub = df[df["era"] == key].copy()
     sub["ctype"] = M.collapse_types(sub["complaint_type"], TYPES)
-    fits[key] = M.fit(sub, geo, TYPES + ["Other"], M.Config("era", half_life_days=None),
+    fits[key] = M.fit(sub, geo, TYPES + ["Other"], M.Config("era", half_life_days=None, cutwise=True),
                       sub["created_date"].max())
     s2 = sub[sub["geoid"].notna()]
     counts[key] = s2.groupby([s2["geoid"], s2["ctype"]], observed=True).size()
 
 def p24_and_var(fm):
-    a = fm.a_tract; A = a.sum(-1); Ac = a[..., :2].sum(-1)
-    m = Ac / A
-    return m, m * (1 - m) / (A + 1)
+    # mean and variance of P(resolved within 24 hours) from the shipped per-threshold model
+    return fm.cum_mean()[..., 1], fm.cum_variance()[..., 1]
 
 def tract_deltas(a_key, b_key):
     ma, va = p24_and_var(fits[a_key]); mb, vb = p24_and_var(fits[b_key])
@@ -446,7 +445,11 @@ the chunks above.
 The estimator throughout is a hierarchical Dirichlet–Multinomial over the nine ordered
 duration bins, with partial pooling tract → NTA → borough → citywide, fit as a
 top-down conjugate cascade (each node's Dirichlet prior is κ pseudo-counts shaped like
-its parent's posterior mean). Alternatives considered and rejected: continuous-time
+its parent's posterior mean). It is fitted once per cumulative threshold: the bins are merged
+into "within X" versus "later" (a Dirichlet merged over categories is a Dirichlet with summed
+parameters) and each of the eight two-category hierarchies has its own pooling strengths, so
+the rates being compared are not over-smoothed by strengths dominated by other bins. The eight
+cumulative curves are made non-decreasing with a running maximum. The era fits in this report use the same model as the live map. Alternatives considered and rejected: continuous-time
 survival models (non-conjugate inference at 40M rows for a deliverable that is the
 binned distribution anyway); continuation-ratio Beta–Binomial stacks (equally
 conjugate but no actual adjacent-bin smoothing without breaking conjugacy — bin order
@@ -460,7 +463,7 @@ not the neighborhood.
 
 ### Configuration contest (live map)
 
-Nine configurations were compared on a temporal holdout (train 2024-08 → 2025-08,
+Ten configurations were compared on a temporal holdout (train 2024-08 → 2025-08,
 test the following 12 months; all hyperparameters fit on train only), scored by mean RPS
 (primary), log-loss, calibration error, and interval calibration, with paired
 block-bootstrap SEs over tract×type cells (`docs/evaluation_results.md`):
@@ -470,8 +473,9 @@ block-bootstrap SEs over tract×type cells (`docs/evaluation_results.md`):
 | No pooling (uniform / Jeffreys) | 0.10685 / 0.10548 | +0.00395 / +0.00258 |
 | Hierarchy, fixed κ=15 | 0.10365 | +0.00075 |
 | Hierarchy, EB κ (per type / per type-level) | 0.10316 / 0.10318 | +0.00026 / +0.00028 |
-| **+ 90-day decay (shipped)** | **0.10302** | +0.00012 |
+| + 90-day decay (previous model) | 0.10302 | +0.00012 |
 | + 180-day / 365-day decay | 0.10290 / 0.10297 | best / +0.00007 |
+| **+ per-threshold pooling, 90-day decay (shipped)** | **0.10297** | +0.00007 |
 
 The no-pooling baselines' failure mode is exact and diagnostic: on tract×type cells
 unseen in training they predict the bare prior — uniform over nine bins, log-loss
@@ -481,8 +485,10 @@ This single split trains once and predicts up to a year ahead, which favors long
 and is not how the map is used; the weekly-refit setting is tested by a rolling-origin
 evaluation that refits at each month start and scores only that month
 (`docs/rolling_evaluation.md`). There, half-lives of 45 to 180 days are statistically
-tied with the shipped 90 days (differences of 0.00000 to +0.00004 RPS), 365 days is worse
-by 0.00014 ± 0.00005, and no decay by 0.00040 ± 0.00008, so 90 days stays.
+tied with the nine-bin 90-day model (differences of 0.00000 to +0.00004 RPS), 365 days is worse
+by 0.00014 ± 0.00005, and no decay by 0.00040 ± 0.00008, so 90 days stays. The shipped
+per-threshold model beats the nine-bin model with the same decay in that protocol by
+0.00019 ± 0.00002 RPS and 0.00084 ± 0.00016 log-loss.
 
 ### Defects found by audit, all fixed
 
@@ -501,11 +507,16 @@ verification of every exported cell against the raw files) found:
    day-of-year split where drift is impossible by construction, refuting an initial
    "temporal drift" explanation. The live map's intervals now add a per-type,
    per-threshold regime variance estimated from rolling 60-day temporal holdouts; on the
-   current data, coverage is 0.908 in dense cells and about 0.90 in sparse ones
-   (squared standardized residual 1.14). A multiplicative (design-effect) correction was
-   tested and rejected — it absurdly inflates sparse-cell intervals. Why the even/odd-day
-   shortfall occurred (correlated outcomes within cells is the working hypothesis) has
-   not been tested directly.
+   current data, coverage is 0.911 in dense cells and about 0.91 in sparse ones
+   (squared standardized residual 1.05). A multiplicative (design-effect) correction was
+   tested and rejected — it absurdly inflates sparse-cell intervals. The even/odd-day
+   shortfall has since been tested directly (`docs/robustness_checks.md`): most of it is
+   that the held-out half is itself a finite sample (coverage 0.69 against the true-rate
+   interval, 0.89 once the half's own noise is counted), and the rest is day-to-day
+   clustering of outcomes within cells (dispersion 1.29; inflating the sampling variance by it
+   gives 0.90). Batch closures are not the cause. Under the deployed protocol (regime
+   variance re-estimated before each of 11 months, next month scored) overall coverage is
+   0.874 (`docs/interval_calibration_rolling.md`).
 3. **Requests without a tract were counted in one tract.** Under pandas 2, converting the
    tract column with `astype(str)` turned missing values into the text "nan", so about
    1.6% of requests were counted in Rikers Island (tract 36005000100); pandas 3 keeps them
@@ -528,11 +539,12 @@ verification of every exported cell against the raw files) found:
   0.00176 ± 0.00038 but wins in only 5 of the 11 months, so it is not adopted
   (`pipeline/eval_rolling.py`).
 - **Pooling strength per threshold**: fitting a separate strength for each cumulative
-  threshold improves held-out log-loss slightly at all eight thresholds, but is mixed by
-  type and marginal for the all-complaints view; not adopted (`docs/cutwise_evaluation.md`).
-  This bears on this report: the tract-level era comparisons use the nine-bin pooling, so
-  for types where that over-pools the 24-hour rate, tract-level changes between eras are
-  understated (conservative), not overstated.
+  threshold improves held-out log-loss at all eight thresholds (mixed by type, marginal for
+  the all-complaints view) and lets the maps show the tract-level variation the data support;
+  adopted for the live map and for the era fits here (`docs/cutwise_evaluation.md`). Switching
+  the era fits to it moved the tract-level tables modestly (for example, the share of Heat/Hot
+  Water tracts with a credible increase under Adams versus de Blasio fell from 95% to 87%), because
+  less pooling means less of each tract's change is shared with its neighborhood.
 - **Censoring**: the 31-day maturity cutoff is keyed to the top bin boundary, making
   the "still open ⇒ month+" assignment deductively exact rather than imputed;
   verified against pull dates. Composition of the month+ bin was audited on the original
@@ -541,12 +553,13 @@ verification of every exported cell against the raw files) found:
   with a high-open-share flag.
 - **Cleaning funnel** (current live window): 7.52M → 7.08M rows; about 286k
   double-submissions collapsed, 131k exact-zero durations dropped, 114k batch closures
-  flagged and *kept* (dropping them would optimistically bias slow agencies). A full
-  evaluation re-run excluding batch-flagged records remains open; for this document their
-  per-era rates are disclosed in the era context table instead.
+  flagged and *kept*. Re-running the rolling evaluation and the map fit without them
+  (`docs/robustness_checks.md`) moved the all-complaints citywide 24-hour figure from 58.6% to
+  59.9% and borough-by-type figures by at most 2.1 points, improved predictions for unflagged requests
+  negligibly and worsened predictions for all requests; their per-era rates are also disclosed in the era context table.
 - **Independent audit** (`pipeline/audit.py`): raw rows reconcile with the funnel; every
   tract × type count matches an independent tally; binning is correct at the bin
-  boundaries; a separate re-implementation of the cascade reproduces all 51,150 cells; and
+  boundaries; a separate re-implementation of the per-threshold hierarchies reproduces all 51,150 cells; and
   one month recomputed from the raw files agrees with the pipeline to 0.1 point.
 - **RPS implementation** verified against hand computation; bootstrap resamples
   cells, not requests (within-cell correlation would otherwise understate SEs).

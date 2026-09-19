@@ -16,14 +16,17 @@ Mamdani administration.
   - `fetch_311_history.py`  Download the 2010–2024 archive for the historical analysis
   - `prepare.py`            Cleaning, tract point-in-polygon, censoring, 9-bin durations
   - `prepare_hist.py`       Same cleaning applied year-by-year to the historical pulls
-  - `model.py`              Hierarchical Dirichlet-Multinomial cascade, EB concentration, interval calibration
+  - `model.py`              Hierarchical cascade (one pooling strength per threshold), EB concentration, interval calibration
   - `types.json`            Pinned complaint-type list (everything else is grouped as "Other")
   - `export_web.py`         Fit the shipped model, export the web/data payload and geometry
   - `validate_export.py`    Sanity gate on the export (freshness, volume, tract counts, invariants); blocks publishing on failure
-  - `audit.py`              Independent end-to-end audit: raw files → export, every cell, with its own re-implementation of the cascade
-  - `evaluate.py`           Single-split prior comparison (P0–P6a)
+  - `audit.py`              Independent end-to-end audit: raw files → export, every cell, with its own re-implementation of the per-threshold hierarchies
+  - `evaluate.py`           Single-split prior comparison (P0–P7a)
   - `eval_rolling.py`       Rolling-origin comparison (refit monthly, score the next month): decay half-life, seasonal blending
-  - `eval_cutwise.py`       Separate pooling strength per threshold vs the nine-bin model (tested, not adopted)
+  - `eval_cutwise.py`       Per-threshold pooling vs the nine-bin model (the evidence for the shipped design)
+  - `eval_kappa_source.py`  Whether pooling strengths should be fitted on decay-weighted or raw counts (decay-weighted kept)
+  - `eval_intervals_rolling.py`  Interval coverage under the deployed protocol
+  - `robustness_checks.py`  Per-type calibration, day-clustering of outcomes, batch-closure sensitivity
   - `sim_check.py`          Simulation of the cascade against known truth: accuracy and interval coverage
   - `stan_check.py`         Full-Bayes check of the cascade in Stan (needs CmdStan and `cmdstanpy`); program in `stan/hier_dm.stan`
 - `web/`  — static MapLibre single-page app (open via any static server)
@@ -36,6 +39,9 @@ Mamdani administration.
   - `simulation_check.md`      Simulation results (generated)
   - `stan_validation.md`       Stan comparison results (generated)
   - `cutwise_evaluation.md`    Cutwise-vs-nine-bin results (generated)
+  - `kappa_source_evaluation.md`  Decayed vs raw counts for pooling strengths (generated)
+  - `interval_calibration_rolling.md`  Interval coverage by type under the deployed protocol (generated)
+  - `robustness_checks.md`     Per-type calibration, outcome clustering, batch-closure sensitivity (generated)
   - `statistical_review.md`    Adversarial audits and the corrections they led to
   - `historical_analysis.qmd`  Reproducible Quarto writeup: resolution odds across administrations (renders to `.html`)
 
@@ -91,8 +97,9 @@ to 33%. Mapping raw per-tract proportions draws a lie in bright colors.
 ### The approach: let small blocks borrow from their neighborhood
 The fix is **partial pooling** (shrinkage): a tract with lots of data speaks for itself; a
 tract with little data leans on its surrounding neighborhood, then its borough, then the
-city. Concretely, resolution outcomes are modeled as a **hierarchical Dirichlet-Multinomial
-over 9 ordered resolution-time bins**, pooled *within complaint type across geography*
+city. Concretely, the probability of being resolved within each of eight thresholds (3 hours
+to 31 days) is modeled by its own **hierarchical Beta-Binomial** (a two-category Dirichlet),
+each with its own pooling strength, pooled *within complaint type across geography*
 (tract → NTA → borough → citywide), because resolution time is driven far more by
 complaint type / responsible agency than by geography. Each estimate's shrinkage weight
 `w = n / (n + κ)` is set by how much local data the cell has relative to a fitted
@@ -100,12 +107,16 @@ concentration κ — not a hand-picked constant. Every published estimate ships 
 **data-strength indicator** and uncertainty bands, so the map is honest about how much of
 an estimate is the block's own record versus a borrowed neighborhood estimate.
 
-### Winning config: P5a
-Empirical-Bayes concentration per (type, level) by bounded MLE on the exact
-Dirichlet-Multinomial marginal likelihood, exponential time decay (90-day half-life), and
-90% intervals calibrated with a per-type regime-variance component estimated from rolling
-temporal holdouts. Selected by lowest ranked probability score (RPS) on a 12-month-train /
-5-month-test temporal holdout, over candidates P0–P5c (`docs/evaluation_results.md`).
+### Shipped config: P7a (per-threshold pooling)
+Eight independent two-category hierarchies (bins ≤ c versus later), each with empirical-Bayes
+concentrations per (type, level) by bounded MLE on the exact marginal likelihood, exponential
+time decay (90-day half-life), a running maximum across thresholds so the curve never
+decreases, and 90% intervals calibrated with a per-type regime-variance component estimated
+from rolling temporal holdouts. It replaced the earlier single-strength nine-bin model (P5a)
+because one strength shared across all bins is dominated by the quiet bins and over-pools the
+rates the map shows: within-borough spread of P(≤24h) across tracts roughly doubles to triples
+for heat, water, encampment and street-condition complaints, and rolling-origin log-loss
+improves at every threshold (`docs/cutwise_evaluation.md`, `docs/rolling_evaluation.md`).
 
 ### Validation
 The estimator survived an adversarial audit (`docs/statistical_review.md`) that

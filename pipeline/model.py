@@ -20,6 +20,8 @@ K = 9
 ALPHA0 = 0.5   # Jeffreys at the global root
 KAPPA0 = 5.0   # city ALL -> city type
 KAPPA_MIN, KAPPA_MAX = 0.5, 5000.0
+BIN_FLOOR = 1e-6      # smallest bin probability reported by the cutwise model (keeps log-loss finite)
+HEADLINE_CUT = 1      # the 24-hour threshold: its tract concentration defines the reported shrinkage weight
 
 
 # Include the parent-uncertainty term in interval variances. Set PARENT_TERM=0 only to
@@ -38,6 +40,9 @@ class Config:
     seasonal_beta: float = 0.0          # weight of same-season-last-year kernel
     seasonal_bw_days: float = 45.0      # kernel half-life around age = 1 year
     loo_parent: bool = False            # prior mean from siblings only (exclude the unit's own counts)
+    cutwise: bool = False               # one two-category hierarchy per threshold (CutwiseModel) instead of one 9-bin cascade
+    kappa_source: str = "decayed"       # 'decayed': fit concentrations on the decay-weighted counts; 'raw': fit them on the
+                                        # undecayed counts; 'raw_scaled': raw fit scaled by the decay's mass ratio
 
 
 CONFIGS = [
@@ -50,6 +55,7 @@ CONFIGS = [
     Config("P5b P4 + decay h=180d", half_life_days=180.0),
     Config("P5c P4 + decay h=365d", half_life_days=365.0),
     Config("P6a P5a + sibling-only prior", half_life_days=90.0, loo_parent=True),
+    Config("P7a P5a + cutwise pooling", half_life_days=90.0, cutwise=True),
 ]
 
 
@@ -176,7 +182,8 @@ def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
     with its empirical rate over the following horizon; sigma[type][cut] is the q-th
     percentile of squared deviation in excess of the sampling variance (model +
     horizon sample), pooled across origins, with a pooled-over-types fallback for
-    thin types. Multiple origins spread across the year average over seasonal
+    thin types. Holdout cells need >= min_cell (50) requests; 20 was tested and rejected
+    (docs/interval_calibration_rolling.md). Multiple origins spread across the year average over seasonal
     regimes. Additive (not multiplicative) so sparse cells - whose intervals are
     already wide - are only modestly widened.
 
@@ -197,8 +204,6 @@ def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
         tr["ctype"] = collapse_types(tr["complaint_type"], named)
         ho = ho.assign(ctype=collapse_types(ho["complaint_type"], named))
         fm = fit(tr, geo, types, cfg, fe)
-        a = fm.a_tract
-        A = a.sum(-1)
         tix = {t: i for i, t in enumerate(types)}
 
         # per-cell bin histogram -> empirical cumulative rates at all cuts at once
@@ -212,7 +217,7 @@ def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
         gi = np.array([geo.tract_ix.get(g, -1) for g in ct.index.get_level_values(0)])
         ti = np.array([tix.get(t, -1) for t in ct.index.get_level_values(1)])
         ok = (gi >= 0) & (ti >= 0)
-        mid = a.cumsum(-1)[..., :-1] / A[..., None]                   # (tract, T+1, 8)
+        mid = fm.cum_mean()                                           # (tract, T+1, 8)
         m = mid[gi[ok], ti[ok]]                                       # (cells, 8)
         cv = fm.cum_variance()                         # Dirichlet + parent-uncertainty variance
         var0 = cv[gi[ok], ti[ok]]
@@ -255,7 +260,7 @@ class FittedModel:
     """Posterior Dirichlet parameters at every level, plus diagnostics."""
 
     def __init__(self, geo: GeoIndex, types: list[str], a_tract, a_nta, a_boro, a_city,
-                 n_tract_dec, R_tract, kappa3, kappa_table, pm_tract=None, A_parent=None):
+                 n_tract_dec, R_tract, kappa3, kappa_table, pm_tract=None, A_parent=None, k_levels=None):
         self.geo = geo
         self.types = types            # named types (+ 'Other'); index T = ALL
         self.a_tract = a_tract        # (n_tract, T+1, K)
@@ -268,9 +273,26 @@ class FittedModel:
         self.kappa_table = kappa_table  # {level: {type: kappa}} for reporting
         self.pm_tract = pm_tract        # prior mean each tract borrows (n_tract, T+1, K), or None
         self.A_parent = A_parent        # total Dirichlet mass behind that prior mean (n_tract, T+1)
+        self.k_levels = k_levels        # {'boro'|'nta'|'tract': concentrations (T+1,)} actually used
 
     def tract_probs(self) -> np.ndarray:
         return _normalize(self.a_tract)
+
+    # ---- interface shared with CutwiseModel (bins on the last axis; cumulative excludes the last) ----
+    def bin_probs_tract(self) -> np.ndarray:
+        return _normalize(self.a_tract)
+
+    def bin_probs_boro(self) -> np.ndarray:
+        return _normalize(self.a_boro)
+
+    def cum_mean(self) -> np.ndarray:
+        return np.cumsum(self.bin_probs_tract(), -1)[..., :-1]
+
+    def city_cum(self) -> np.ndarray:
+        return np.cumsum(_normalize(self.a_city[0]), -1)[..., :-1]
+
+    def boro_cum(self) -> np.ndarray:
+        return np.cumsum(self.bin_probs_boro(), -1)[..., :-1]
 
     def cum_variance(self) -> np.ndarray:
         """Variance of each cumulative probability P(bin <= c), c = 0..K-2 -> (n_tract, T+1, K-1).
@@ -295,8 +317,81 @@ class FittedModel:
         return self.n_tract_dec / (self.n_tract_dec + self.kappa3[None, :])
 
 
+def _bins_from_cum(cum: np.ndarray) -> np.ndarray:
+    """Bin probabilities from monotone cumulative probabilities, floored so none is exactly zero."""
+    bp = np.diff(np.concatenate([np.zeros(cum.shape[:-1] + (1,)), cum, np.ones(cum.shape[:-1] + (1,))], -1), axis=-1)
+    bp = np.maximum(bp, BIN_FLOOR)
+    return bp / bp.sum(-1, keepdims=True)
+
+
+class CutwiseModel:
+    """Eight two-category hierarchies, one per cumulative threshold.
+
+    The nine-bin cascade shares one pooling strength across all bins, which is dominated by
+    the many quiet bins and over-pools the rates the map displays (docs/cutwise_evaluation.md).
+    Here each threshold c gets its own hierarchy on the merged categories (bins <= c vs
+    later; a Dirichlet merged over categories is a Dirichlet with summed parameters), with
+    its own empirical-Bayes concentrations at every level.
+
+    The eight fits are independent, so their cumulative means can cross by small amounts;
+    they are made non-decreasing across thresholds (running maximum) and converted to bin
+    probabilities by differencing, with BIN_FLOOR so that none is zero.
+    """
+
+    def __init__(self, geo: GeoIndex, types: list[str], fits: list["FittedModel"], R_tract):
+        self.geo, self.types, self.fits = geo, types, fits
+        self.R_tract = R_tract
+        self.n_tract_dec = fits[0].n_tract_dec
+        self.kappa3 = fits[HEADLINE_CUT].kappa3
+        self.kappa_table = fits[HEADLINE_CUT].kappa_table          # concentrations at the 24-hour threshold
+        self.kappa_by_cut = [f.kappa_table for f in fits]
+
+    @staticmethod
+    def _monotone(raw: np.ndarray) -> np.ndarray:
+        return np.maximum.accumulate(np.clip(raw, 0.0, 1.0), axis=-1)
+
+    def _raw(self, attr: str, index=None) -> np.ndarray:
+        out = []
+        for f in self.fits:
+            a = getattr(f, attr)
+            a = a[0] if index == "city" else a
+            out.append(a[..., 0] / a.sum(-1))
+        return np.stack(out, -1)
+
+    def raw_cum_mean(self) -> np.ndarray:
+        return self._raw("a_tract")
+
+    def cum_mean(self) -> np.ndarray:
+        return self._monotone(self.raw_cum_mean())
+
+    def cum_variance(self) -> np.ndarray:
+        return np.stack([f.cum_variance()[..., 0] for f in self.fits], -1)
+
+    def bin_probs_tract(self) -> np.ndarray:
+        return _bins_from_cum(self.cum_mean())
+
+    def bin_probs_boro(self) -> np.ndarray:
+        return _bins_from_cum(self._monotone(self._raw("a_boro")))
+
+    def city_cum(self) -> np.ndarray:
+        return self._monotone(self._raw("a_city", "city"))
+
+    def boro_cum(self) -> np.ndarray:
+        return self._monotone(self._raw("a_boro"))
+
+    def shrinkage(self) -> np.ndarray:
+        return self.n_tract_dec / (self.n_tract_dec + self.kappa3[None, :])
+
+    def violation_stats(self) -> dict:
+        """How often, and by how much, the independent per-threshold means cross."""
+        raw = self.raw_cum_mean()
+        drop = np.maximum(raw[..., :-1] - raw[..., 1:], 0.0)          # decrease from one threshold to the next
+        return {"cells_with_violation": float((drop.max(-1) > 0).mean()),
+                "max_drop": float(drop.max()), "p99_drop": float(np.percentile(drop, 99))}
+
+
 def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
-        t_ref: pd.Timestamp, frozen_kappa: dict | None = None) -> FittedModel:
+        t_ref: pd.Timestamp, frozen_kappa: dict | None = None):
     """Fit one configuration. df must have columns ctype, bin, created_date, geoid, boro.
 
     frozen_kappa: optional {"boro"|"nta"|"tract": array (T+1,)} — skips EB estimation and uses the
@@ -305,6 +400,32 @@ def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
     C_tract, C_nta, C_boro, C_city, R_tract = count_tensors(
         df, geo, types, t_ref, cfg.half_life_days,
         cfg.seasonal_beta, cfg.seasonal_bw_days)
+    dec = (C_tract, C_nta, C_boro, C_city, R_tract)
+    raw = None
+    if cfg.kappa_source != "decayed" and cfg.half_life_days is not None:
+        raw = count_tensors(df, geo, types, t_ref, None, cfg.seasonal_beta, cfg.seasonal_bw_days)
+    per_cut = Config(cfg.name, kappa_mode=cfg.kappa_mode, half_life_days=cfg.half_life_days,
+                     loo_parent=cfg.loo_parent)
+
+    def frozen_from_raw(raw_t, dec_t, cut=None):
+        """Concentrations fitted on the raw counts (optionally scaled by the decay's mass ratio)."""
+        merge = (lambda x: x) if cut is None else (lambda x: merge_at_cut(x, cut))
+        rf = fit_from_counts(*[merge(x) for x in raw_t], geo, types, per_cut)
+        k = {lvl: np.array(v, dtype=float) for lvl, v in rf.k_levels.items()}
+        if cfg.kappa_source == "raw_scaled":
+            for lvl, i in (("tract", 0), ("nta", 1), ("boro", 2)):     # mass ratio per level and type
+                num, den = dec_t[i].sum((0, 2)), raw_t[i].sum((0, 2))
+                k[lvl] = np.clip(k[lvl] * num / np.maximum(den, 1e-12), KAPPA_MIN, KAPPA_MAX)
+        return k
+
+    if cfg.cutwise:
+        assert frozen_kappa is None, "frozen_kappa is not supported for the cutwise model"
+        fits = [fit_from_counts(*[merge_at_cut(x, c) for x in dec], geo, types, per_cut,
+                                frozen_kappa=(frozen_from_raw(raw, dec, c) if raw is not None else None))
+                for c in range(K - 1)]
+        return CutwiseModel(geo, types, fits, R_tract)
+    if raw is not None:
+        frozen_kappa = frozen_from_raw(raw, dec)
     return fit_from_counts(C_tract, C_nta, C_boro, C_city, R_tract, geo, types, cfg, frozen_kappa)
 
 
@@ -350,7 +471,9 @@ def fit_from_counts(C_tract, C_nta, C_boro, C_city, R_tract, geo: GeoIndex, type
         if cfg.kappa_mode == "fixed":
             return np.full(T + 1, cfg.fixed_kappa)
         if frozen_kappa is not None:
-            return np.asarray(frozen_kappa[lvl])
+            ks = np.asarray(frozen_kappa[lvl], dtype=float)
+            table[lvl] = {types[ti] if ti < T else "ALL": round(float(ks[ti]), 2) for ti in range(T + 1)}
+            return ks
         ks = np.full(T + 1, np.nan)
         for ti in range(T + 1):
             ks[ti] = fit_kappa(C[:, ti, :], parent_mean[:, ti, :]) or np.nan
@@ -401,4 +524,5 @@ def fit_from_counts(C_tract, C_nta, C_boro, C_city, R_tract, geo: GeoIndex, type
     A_parent = np.maximum(parent_params, 1e-9).sum(-1)
     return FittedModel(geo, types, a_tract, a_nta, a_boro, a_city,
                        C_tract.sum(-1), R_tract, k3, table,
-                       pm_tract=_normalize(np.maximum(parent_params, 1e-9)), A_parent=A_parent)
+                       pm_tract=_normalize(np.maximum(parent_params, 1e-9)), A_parent=A_parent,
+                       k_levels={"boro": k1, "nta": k2, "tract": k3})

@@ -20,7 +20,7 @@ import model as M
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 N_TYPES = 20
 TRAIN_DAYS = 365
-SHIPPED = "P5a P4 + decay h=90d"
+SHIPPED = "P7a P5a + cutwise pooling"
 
 
 def load() -> tuple[pd.DataFrame, M.GeoIndex]:
@@ -34,13 +34,8 @@ def load() -> tuple[pd.DataFrame, M.GeoIndex]:
     return df, M.GeoIndex(geo_lookup)
 
 
-def cumulative_A(a: np.ndarray, upto: int) -> np.ndarray:
-    return a[..., :upto].sum(-1)
-
-
-def predictions_for(fm: M.FittedModel, geo: M.GeoIndex, type_ix: dict,
-                    test: pd.DataFrame):
-    """Per-test-request Dirichlet params from its tract x type cell (n_test, K), and the
+def predictions_for(fm, geo: M.GeoIndex, type_ix: dict, test: pd.DataFrame):
+    """Per-test-request bin probabilities from its tract x type cell (n_test, K), and the
     variance of that cell's P(<=24h) including the parent-uncertainty term."""
     ti = test["ctype"].map(type_ix).to_numpy()
     gi = test["geoid"].map(geo.tract_ix)
@@ -48,14 +43,12 @@ def predictions_for(fm: M.FittedModel, geo: M.GeoIndex, type_ix: dict,
     has_tract = gi.notna().to_numpy()
     gi_f = gi.fillna(0).astype(int).to_numpy()
     a = np.empty((len(test), M.K))
-    a[has_tract] = fm.a_tract[gi_f[has_tract], ti[has_tract]]
+    a[has_tract] = fm.bin_probs_tract()[gi_f[has_tract], ti[has_tract]]
     bi = test["boro"].map(geo.boro_ix).fillna(0).astype(int).to_numpy()
-    a[~has_tract] = fm.a_boro[bi[~has_tract], ti[~has_tract]]
+    a[~has_tract] = fm.bin_probs_boro()[bi[~has_tract], ti[~has_tract]]
     var24 = np.empty(len(test))
     var24[has_tract] = fm.cum_variance()[gi_f[has_tract], ti[has_tract], 1]
-    ab = a[~has_tract]
-    mb = ab[:, :2].sum(1) / ab.sum(1)
-    var24[~has_tract] = mb * (1 - mb) / (ab.sum(1) + 1)     # borough fallback: no parent term
+    var24[~has_tract] = 0.0       # borough fallback: borough posteriors rest on ~10^4+ counts, so the sampling term is negligible
     return a, var24
 
 
@@ -123,9 +116,7 @@ def evaluate_config(cfg: M.Config, train: pd.DataFrame, test: pd.DataFrame,
     # 90% interval coverage on P(<=24h) for cells with >=50 test obs.
     # Intervals include the additive regime variance estimated on TRAIN (as
     # shipped), so configs are judged on the intervals users actually see.
-    A = a.sum(1)
-    Ac = cumulative_A(a, 2)
-    mid = Ac / A
+    mid = a[:, :2].sum(1)
     var0 = var24
     if sigma24 is not None and cfg.hierarchy:
         sv = np.array([sigma24.get(t, sigma24["__pooled__"]) for t in test["ctype"]])
@@ -214,19 +205,19 @@ def main() -> None:
     # interval calibration on TRAIN only (origins + 60d horizons all precede split)
     origins = [str((split - pd.Timedelta(days=d)).date()) for d in (270, 210, 150, 90)]
     sigma_by_loo = {}
-    for loo in (False, True):       # the calibration must use the same prior structure as the model it serves
+    for loo, cw in ((False, False), (True, False), (False, True)):   # calibrate with the same structure as the model it serves
         sig = M.estimate_regime_sigma(train, geo, types, origins, cfg=M.Config(
-            "sigma-est", kappa_mode="per_type_level", half_life_days=90.0, loo_parent=loo))
+            "sigma-est", kappa_mode="per_type_level", half_life_days=90.0, loo_parent=loo, cutwise=cw))
         sg = {t: v[1] for t, v in sig["per_type"].items()}
         sg["__pooled__"] = sig["pooled"][1]
-        sigma_by_loo[loo] = sg
-        print(f"regime sigma (train, 24h cut, sibling-only={loo}): pooled={sig['pooled'][1]:.3f}", flush=True)
+        sigma_by_loo[(loo, cw)] = sg
+        print(f"regime sigma (train, 24h cut, sibling-only={loo}, cutwise={cw}): pooled={sig['pooled'][1]:.3f}", flush=True)
 
     results, rps_by_cfg, cell_keys = [], {}, None
     for cfg in M.CONFIGS:
         t0 = time.time()
         r, rps, keys = evaluate_config(cfg, train, test, geo, types, type_ix, t_ref, tcn,
-                                       sigma24=sigma_by_loo[cfg.loo_parent])
+                                       sigma24=sigma_by_loo[(cfg.loo_parent, cfg.cutwise)])
         results.append(r)
         rps_by_cfg[cfg.name] = rps
         cell_keys = keys

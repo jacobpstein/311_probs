@@ -91,7 +91,13 @@ Rules, applied in order (the row count after each is logged to `data/funnel.json
    auto-acknowledge) but counted.
 6. **Flag** — but keep — **batch closures**: minutes in which an agency closed an unusually
    large spike of cases (> max(500, 20% of that agency's median daily closures)). Keeping
-   them is the honest choice: the recorded closure is what the requester experienced.
+   them is the honest choice: the recorded closure is what the requester experienced. A
+   sensitivity check supports that: 1.6% of requests are flagged (HPD 77k, DOB 35k;
+   9–10% of Water Leak, Door/Window and Plumbing requests), and dropping them from training
+   moves the all-complaints citywide 24-hour figure from 58.6% to 59.9% (borough-by-type
+   changes at most 2.1 points, tract map correlation 0.9975) while predicting the requests that
+   were *not* flagged only negligibly better (log-loss −0.0004) and all requests worse
+   (+0.0014) ([robustness_checks.md](robustness_checks.md)).
 
 For the current window the funnel was: **7.52M → 7.08M** kept, with about 286k
 double-submissions collapsed, 131k exact-zero durations dropped, and 114k batch-closure flags.
@@ -150,11 +156,20 @@ update as new data arrives**.
 
 ### 4.1 Model class
 
-We use a **hierarchical Dirichlet–Multinomial** model. Each request in a cell (tract × type)
-is a draw from a 9-category distribution `p` (the probabilities of the nine bins). The
-category counts are therefore **Multinomial**; the natural, conjugate prior for `p` is a
-**Dirichlet**. "Hierarchical" means each cell's Dirichlet prior is centered on its parent's
-estimated distribution.
+We use a **hierarchical Dirichlet–Multinomial** model, fitted **once per threshold**. Each
+request in a cell (tract × type) falls into one of nine bins, so the bin counts are
+**Multinomial** and the natural, conjugate prior is a **Dirichlet**. "Hierarchical" means each
+cell's Dirichlet prior is centered on its parent's estimated distribution. The map shows
+cumulative probabilities ("resolved within X"), and a Dirichlet merged over categories is
+again a Dirichlet with summed parameters, so for each of the eight thresholds we merge the
+nine bins into two ("within X" versus "later") and fit that two-category hierarchy with its
+own pooling strengths. That matters because how much tracts genuinely differ depends on the
+threshold: one strength shared across all nine bins is dominated by the quiet bins and
+over-pools exactly the rates the map displays (§6.3, §7.1). The eight fits are independent, so
+their cumulative curves can cross by tiny amounts; they are made non-decreasing with a running
+maximum (measured: 21.5% of cells have some crossing, but the 99th-percentile drop is 0.00002
+and the mean adjustment 0.00001), and bin probabilities are obtained by differencing, with a
+floor of 10⁻⁶ so none is exactly zero.
 
 Why this class and not something fancier (a survival model, a neural net)? Three reasons:
 (1) the deliverable *is* the binned distribution, so modeling continuous time buys nothing we
@@ -165,7 +180,8 @@ discussed and rejected in [model_spec.md §1](model_spec.md).
 
 ### 4.2 The generative story
 
-For a fixed complaint type, with concentration parameters κ at each level:
+For a fixed complaint type and threshold, with concentration parameters κ at each level (shown
+for the full nine-bin distribution; each threshold uses the same structure on two categories):
 
 ```
 p_city    ~ Dirichlet(½ · 1)                     # weak "Jeffreys" prior at the root
@@ -182,8 +198,9 @@ what the legal response window is) than by where it is.
 
 ### 4.3 How an estimate is computed
 
-We use the standard top-down **conjugate cascade**: each node's posterior is a Dirichlet
-whose parameters are its parent's posterior *mean* (scaled by κ) plus the node's own counts.
+We use the standard top-down **conjugate cascade**, run separately for each threshold: each
+node's posterior is a Dirichlet whose parameters are its parent's posterior *mean* (scaled by
+κ) plus the node's own counts.
 
 ```
 a_tract = κ₃ · (parent NTA mean) + (this tract's bin counts)
@@ -201,7 +218,8 @@ Everything the app shows is then closed-form from `a_tract` (with `A = Σ a`):
   with seasonality and agency behavior, not just sampling noise (§6.1 shows why this
   component is essential). Half-width = 1.645·√(sampling + (κ/A)²·parent + regime²).
 - **Shrinkage weight** `λ = n / (n + κ₃)` ∈ [0, 1]: the share of the estimate that comes
-  from *this tract's own data* versus the borrowed neighborhood pattern.
+  from *this tract's own data* versus the borrowed neighborhood pattern (reported with the
+  24-hour threshold's κ).
 
 > That last number, λ, is what powers the "data strength" dots in the
 > app. λ near 1 ("Strong local data," ●●●) means the estimate is essentially this tract's own
@@ -213,7 +231,7 @@ Everything the app shows is then closed-form from `a_tract` (with `A = Σ a`):
 The concentration parameters κ decide *how strongly* a child is pulled toward its parent — in
 plain terms, "how many requests' worth of belief" the parent's pattern is worth before local
 data takes over. Rather than guess them, we **learn them from the data** by empirical Bayes:
-for each (type, level) we maximize the exact Dirichlet–Multinomial marginal likelihood by
+for each (threshold, type, level) we maximize the exact Dirichlet–Multinomial marginal likelihood by
 **bounded scalar optimization over log κ** (about thirty likelihood evaluations per
 parameter). Types with fewer than 8 well-populated children fall back to a pooled per-level
 estimate. An implementation note for practitioners: the commonly used Minka fixed-point
@@ -225,8 +243,10 @@ The learned κ's vary by complaint type: strong pooling where resolution speed i
 within a neighborhood, weaker where there is genuine block-to-block variation. Very large
 values (several types sit at the 5,000 ceiling at the tract level) should not be read as
 proof of "no tract-level signal": in simulations with known truth this estimator overstates
-the tract-level strength by 45% or more (§6.2), and one strength shared across all nine bins
-is dominated by the many quiet bins (§7.1). The full κ table is in
+the tract-level strength by 45% or more (§6.2). Fitting the strengths on undecayed rather than
+decay-weighted counts (where they are far smaller for several types, e.g. Street Condition
+57 against the 5,000 ceiling) predicted no better in the rolling test
+([kappa_source_evaluation.md](kappa_source_evaluation.md)), so the decay-weighted fit stays. The full κ table is in
 [evaluation_results.md](evaluation_results.md).
 
 ### 4.5 An honest note on the approximation
@@ -353,8 +373,33 @@ multiplicative so sparse cells are only modestly widened. On the current data, c
 least 50 test requests are covered 90.8% of the time, and in sparse cells (fewer than 30
 training requests, at least 10 test requests) the squared standardized residual is 1.14 with
 90.2% of cells inside their interval, both close to the targets. The 7-day calibration error
-is 0.017. Whether the even/odd-day shortfall was caused by correlated outcomes within cells
-(repeat reports, batch closures) has not been tested directly.
+is 0.017.
+
+Three follow-up checks on the shipped model ([robustness_checks.md](robustness_checks.md),
+[interval_calibration_rolling.md](interval_calibration_rolling.md)):
+
+- **The even/odd-day shortfall is mostly a matter of what is compared.** Holding out odd days
+  and comparing their observed rate with the interval for the *true* rate gives coverage 0.69
+  in dense cells; the held-out half is itself a finite sample, and adding its binomial noise
+  raises coverage to 0.89. Correlated outcomes account for the rest: outcomes cluster by day
+  (Pearson dispersion of daily counts within cells 1.29 on average, 3.25 for Snow or Ice, 1.74
+  for Noise - Street/Sidewalk), and inflating the sampling variance by the dispersion measured
+  on the training half brings coverage to 0.903. Batch closures are not the cause: removing
+  them leaves the pooled dispersion at 1.29 and moves coverage by 0.001. (The original 0.51 was
+  measured on an earlier model and window and was not reproduced with the old code.)
+- **Types with almost no regime variance.** Dense-cell coverage is 0.91–0.96 for Noise -
+  Commercial, Noise - Residential, Illegal Parking, Blocked Driveway and Unsanitary Condition.
+  Noise - Street/Sidewalk is under-covered (0.86; squared residual 1.8): its rate is about
+  99.5%, where a Gaussian interval is a poor description, and its outcomes cluster by day.
+  Inflating by the measured dispersion barely helps (0.88), so this is left as a known limit.
+- **Thin types fall back to a pooled regime variance and are under-covered in the single
+  split** (Street Condition 0.69, Dirty Condition 0.67, Water System 0.84 in dense cells).
+  Lowering the holdout cell threshold from 50 to 20 requests fixes those three in the single
+  split but breaks others, and under the deployed protocol (σ re-estimated before each of 11
+  months, next month scored) the two settings have the same coverage, 0.874, with a worse mean
+  squared residual at 20 (8.8 against 4.6), so 50 is kept. Honestly reported: under that
+  protocol overall coverage of the nominal 90% intervals is 0.874, driven by a few types (Snow
+  or Ice 0.11 on 119 cells, Other 0.86); it is lower than the 0.911 of the single split.
 
 ### 6.2 Checking the approximation: simulation and a fully Bayesian fit
 
@@ -388,17 +433,24 @@ real-data fits are clean (no divergences, R̂ ≤ 1.008). Against a plug-in casc
 counts, the tract means differ by 0.7–1.1 points on average and the uncertainty ratio is
 1.01–1.11.
 
-### 6.3 Options tested and not adopted
+### 6.3 The per-threshold model, and options not adopted
 
-- **A separate pooling strength per threshold** ([cutwise_evaluation.md](cutwise_evaluation.md)).
-  The Stan fits found much weaker pooling of the 24-hour rate than the production model
-  (Street Condition, Brooklyn: tract κ ≈ 29 against the 5,000 ceiling). Fitting one
-  two-category hierarchy per threshold improves held-out log-loss at all eight thresholds
-  (by 0.06–0.32%, each at least 3 standard errors), but the gain is 2 standard errors at
-  the 24-hour threshold for the all-complaints view and vanishes beyond a week, and it is
-  mixed by type (worse for Snow or Ice at 24 hours and Street Condition at one week). Adopting
-  it would mean a new model class, a rule to keep cumulative probabilities monotone, and
-  per-threshold interval calibration.
+- **A separate pooling strength per threshold — adopted** ([cutwise_evaluation.md](cutwise_evaluation.md),
+  [rolling_evaluation.md](rolling_evaluation.md)). The Stan fits found much weaker pooling of
+  the 24-hour rate than the single-strength model (Street Condition, Brooklyn: tract κ ≈ 29
+  against the 5,000 ceiling), so the earlier model was over-smoothing the very rates the map
+  shows. Fitting one two-category hierarchy per threshold improves held-out log-loss at all
+  eight thresholds (by 0.06–0.32%, each at least 3 standard errors), and in the rolling-origin
+  evaluation it beats the nine-bin model with the same decay by 0.00019 ± 0.00002 in RPS and
+  0.00084 ± 0.00016 in log-loss. The gain for the all-complaints view is small (2 standard
+  errors at 24 hours, gone beyond a week) and mixed by type (worse for Snow or Ice at 24 hours
+  and Street Condition at one week; much better for Snow or Ice at one week). It is adopted
+  because the maps should show the variation the data support: within a borough, the
+  tract-to-tract standard deviation of P(≤24h) rose from 0.010 to 0.026 for Heat/Hot Water,
+  0.014 to 0.036 for Water System, 0.018 to 0.035 for Encampment and 0.027 to 0.042 for Street
+  Condition (tracts with at least 30 requests); it is unchanged where tracts genuinely do not
+  differ (Illegal Parking, the noise types, all near 99%). A single-split evaluation is
+  marginally worse in log-loss (1.3403 against 1.3383), since it favors long memory.
 - **Same-season-last-year blending.** With two years of history the best variant improves RPS
   by 0.00013 and log-loss by 0.0018 but wins in only 5 of 11 months.
 - **A sibling-only prior** (excluding a unit's own counts from its parent mean): no
@@ -437,14 +489,14 @@ This is worth stating plainly because it's easy to misread. For high-volume, age
 types the tract-to-tract spread in the *raw* data really is tiny — e.g., the middle 50% of
 Brooklyn tracts differ in their "resolved within 24h" rate for illegal parking by well under
 one percentage point — so a nearly uniform map is the honest picture there. For other types
-there is a second effect to keep in mind: the model pools all nine duration bins with a single
-strength per type and level, and where the 24-hour rate varies a lot between tracts while the
-other bins barely do, that shared strength can over-pool the 24-hour rate. The Stan check put
-the tract-level pooling strength for Street Condition in Brooklyn near 29, against the 5,000
-ceiling in production. Fitting a separate strength per threshold reduces that pooling and
-improves held-out log-loss slightly overall, but not for every type and hardly at all for the
-all-complaints view (§6.3), so it has not been adopted. Types with genuine local structure
-(Heat/Hot Water, Dirty Condition) keep a visibly wider spread.
+there was a second effect, now fixed: the earlier model pooled all nine duration bins with a
+single strength per type and level, and where the 24-hour rate varies a lot between tracts
+while the other bins barely do, that shared strength over-pooled the 24-hour rate. The Stan
+check put the tract-level pooling strength for Street Condition in Brooklyn near 29, against
+the 5,000 ceiling in that model. The shipped model fits a separate strength per threshold
+(§6.3), which roughly doubled to tripled the within-borough spread for heat, water,
+encampment and street-condition complaints. Types with genuine local structure (Heat/Hot
+Water, Dirty Condition) show a visibly wider spread; the near-uniform types stay uniform.
 
 Two consequences for reading the map:
 

@@ -1,6 +1,6 @@
 {
   "lowest_rps_on_single_split": "P5b P4 + decay h=180d",
-  "shipped": "P5a P4 + decay h=90d",
+  "shipped": "P7a P5a + cutwise pooling",
   "types": [
     "Illegal Parking",
     "Noise - Residential",

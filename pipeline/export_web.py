@@ -64,8 +64,8 @@ def main() -> None:
     df["ctype"] = M.collapse_types(df["complaint_type"], top_types)
     t_ref = df["created_date"].max()
 
-    cfg = M.Config("P5a", kappa_mode="per_type_level", half_life_days=HALF_LIFE)
-    print("fitting P5a on all matured data...", flush=True)
+    cfg = M.Config("P7a", kappa_mode="per_type_level", half_life_days=HALF_LIFE, cutwise=True)
+    print("fitting P7a (cutwise) on all matured data...", flush=True)
     fm = M.fit(df, geo, types, cfg, t_ref)
     T = len(types)                      # named types; slot T = ALL
     ship_types = ["ALL"] + types        # UI order: All complaints first
@@ -90,16 +90,13 @@ def main() -> None:
     flags["ALL"] = {"high_open_share": bool(df["bin"].eq(M.K - 1).mean() > 0.20)}
 
     # --- posterior summaries at tract level ---
-    a = fm.a_tract                       # (n_tract, T+1, K)
-    A = a.sum(-1)                        # (n_tract, T+1)
-    bp = a / A[..., None]                # posterior mean per bin
-    cum = bp.cumsum(-1)[..., :-1]        # (n_tract, T+1, 8)
+    bp = fm.bin_probs_tract()            # (n_tract, T+1, K), consistent with the monotone cumulative means
     n_obs = fm.R_tract.sum(-1)           # raw counts (n_tract, T+1)
     shrink = fm.shrinkage()             # (n_tract, T+1)
 
     # 90% intervals on each of the 8 cumulative cuts: Dirichlet sampling variance
     # plus the calibrated additive regime variance (posterior means unaffected).
-    mid_cum = a.cumsum(-1)[..., :-1] / A[..., None]                 # (n_tract, T+1, 8)
+    mid_cum = fm.cum_mean()                                          # (n_tract, T+1, 8), non-decreasing
     var_cum = fm.cum_variance()          # Dirichlet + uncertainty of the borrowed neighborhood mean
     hw = 1.645 * np.sqrt(var_cum + sigma_vec[None, :, :] ** 2)
     lo = np.clip(mid_cum - hw, 0, 1)
@@ -124,15 +121,13 @@ def main() -> None:
     print(f"built {len(data)} tract records x {len(ship_types)} types", flush=True)
 
     # reference profiles (borough + citywide) for the "compare to" affordance
-    def summarize(a_vec):
-        av = a_vec / a_vec.sum(-1, keepdims=True)
-        return [r3(x) for x in av.cumsum(-1)[..., :-1]]
+    city_cum, boro_cum = fm.city_cum(), fm.boro_cum()
     refs = {"city": {}, "boro": {}}
     for st in ship_types:
         ti = type_slot(st)
-        refs["city"][st] = summarize(fm.a_city[0, ti])
+        refs["city"][st] = [r3(x) for x in city_cum[ti]]
         for bi, bname in enumerate(geo.boros):
-            refs["boro"].setdefault(bname, {})[st] = summarize(fm.a_boro[bi, ti])
+            refs["boro"].setdefault(bname, {})[st] = [r3(x) for x in boro_cum[bi, ti]]
 
     # --- geometry ---
     gj = json.load(open(os.path.join(ROOT, "data", "tracts2020.geojson")))
@@ -161,8 +156,8 @@ def main() -> None:
         "refs": refs,
         "flags": flags,
         "model": {
-            "config": "P5a (hierarchical Dirichlet-Multinomial, EB κ via bounded MLE, "
-                      "90-day decay, regime-calibrated intervals)",
+            "config": "P7a (hierarchical Beta-Binomial per threshold, EB κ per threshold via "
+                      "bounded MLE, 90-day decay, regime-calibrated intervals)",
             "data_start": str(df["created_date"].min().date()),
             "data_through": str(t_ref.date()),
             "n_requests": int(len(df)),

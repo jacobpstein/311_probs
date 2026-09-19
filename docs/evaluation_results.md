@@ -9,7 +9,7 @@ _Generated 2026-09-19. Train 2024-08-19–2025-08-19 (3,332,157 requests), test 
 ## Selection
 
 
-**Lowest RPS on this single 12-month split: `P5b P4 + decay h=180d`.** The shipped configuration is `P5a P4 + decay h=90d`: it is chosen with the rolling-origin evaluation ([rolling_evaluation.md](rolling_evaluation.md)), which refits at each month start and predicts only the next month, as the deployed map does. A single split trains once and predicts up to 12 months ahead, which favors long memory (see the notes below).
+**Lowest RPS on this single 12-month split: `P5b P4 + decay h=180d`.** The shipped configuration is `P7a P5a + cutwise pooling`: it is chosen with the rolling-origin evaluation ([rolling_evaluation.md](rolling_evaluation.md)), which refits at each month start and predicts only the next month, as the deployed map does. A single split trains once and predicts up to 12 months ahead, which favors long memory (see the notes below).
 
 
 ## Results table
@@ -19,6 +19,7 @@ _Generated 2026-09-19. Train 2024-08-19–2025-08-19 (3,332,157 requests), test 
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | P5b P4 + decay h=180d | 0.10290 | 0.00149 | +0.00000 | 0.00000 | 1.3392 | 1.7621 | 1.5001 | 1.3052 | 0.10271 | 0.0157 | 0.0157 | 0.909 | 1.14 | 0.80 |
 | P5c P4 + decay h=365d | 0.10297 | 0.00149 | +0.00007 | 0.00002 | 1.3422 | 1.7884 | 1.5092 | 1.3073 | 0.10290 | 0.0143 | 0.0156 | 0.909 | 1.18 | 0.83 |
+| P7a P5a + cutwise pooling | 0.10297 | 0.00149 | +0.00007 | 0.00003 | 1.3403 | 1.7598 | 1.5023 | 1.3063 | 0.10273 | 0.0177 | 0.0162 | 0.911 | 1.05 | 0.70 |
 | P6a P5a + sibling-only prior | 0.10300 | 0.00149 | +0.00010 | 0.00003 | 1.3385 | 1.7325 | 1.4944 | 1.3054 | 0.10272 | 0.0179 | 0.0163 | 0.910 | 1.18 | 0.83 |
 | P5a P4 + decay h=90d | 0.10302 | 0.00149 | +0.00012 | 0.00003 | 1.3383 | 1.7326 | 1.4941 | 1.3052 | 0.10271 | 0.0180 | 0.0165 | 0.908 | 1.14 | 0.78 |
 | P3 hierarchy, EB k per type | 0.10316 | 0.00149 | +0.00026 | 0.00004 | 1.3485 | 1.8568 | 1.5344 | 1.3109 | 0.10325 | 0.0145 | 0.0146 | 0.910 | 1.01 | 0.79 |
@@ -51,80 +52,80 @@ _Generated 2026-09-19. Train 2024-08-19–2025-08-19 (3,332,157 requests), test 
 ```json
 {
   "boro": {
-    "Illegal Parking": 107.43,
-    "Noise - Residential": 107.43,
-    "HEAT/HOT WATER": 107.43,
-    "Blocked Driveway": 107.43,
-    "Noise - Street/Sidewalk": 107.43,
-    "UNSANITARY CONDITION": 107.43,
-    "Street Condition": 107.43,
-    "PLUMBING": 107.43,
-    "Abandoned Vehicle": 107.43,
-    "Water System": 107.43,
-    "Dirty Condition": 107.43,
-    "Noise - Commercial": 107.43,
-    "Noise": 107.43,
-    "PAINT/PLASTER": 107.43,
-    "Snow or Ice": 107.43,
-    "Traffic Signal Condition": 107.43,
-    "DOOR/WINDOW": 107.43,
-    "Encampment": 107.43,
-    "Noise - Vehicle": 107.43,
-    "WATER LEAK": 107.43,
-    "Other": 107.43,
-    "ALL": 107.43
+    "Illegal Parking": 41.98,
+    "Noise - Residential": 41.98,
+    "HEAT/HOT WATER": 41.98,
+    "Blocked Driveway": 41.98,
+    "Noise - Street/Sidewalk": 41.98,
+    "UNSANITARY CONDITION": 41.98,
+    "Street Condition": 41.98,
+    "PLUMBING": 41.98,
+    "Abandoned Vehicle": 41.98,
+    "Water System": 41.98,
+    "Dirty Condition": 41.98,
+    "Noise - Commercial": 41.98,
+    "Noise": 41.98,
+    "PAINT/PLASTER": 41.98,
+    "Snow or Ice": 41.98,
+    "Traffic Signal Condition": 41.98,
+    "DOOR/WINDOW": 41.98,
+    "Encampment": 41.98,
+    "Noise - Vehicle": 41.98,
+    "WATER LEAK": 41.98,
+    "Other": 41.98,
+    "ALL": 41.98
   },
-  "boro_pooled": 107.43,
+  "boro_pooled": 41.98,
   "nta": {
-    "Illegal Parking": 13.22,
-    "Noise - Residential": 14.24,
-    "HEAT/HOT WATER": 2451.31,
-    "Blocked Driveway": 12.55,
-    "Noise - Street/Sidewalk": 18.43,
-    "UNSANITARY CONDITION": 299.31,
-    "Street Condition": 363.02,
-    "PLUMBING": 231.5,
-    "Abandoned Vehicle": 8.83,
-    "Water System": 176.94,
-    "Dirty Condition": 53.71,
-    "Noise - Commercial": 16.45,
-    "Noise": 280.29,
-    "PAINT/PLASTER": 3032.25,
-    "Snow or Ice": 4999.75,
-    "Traffic Signal Condition": 4999.77,
-    "DOOR/WINDOW": 4999.77,
-    "Encampment": 121.11,
-    "Noise - Vehicle": 15.13,
-    "WATER LEAK": 4999.77,
-    "Other": 66.33,
-    "ALL": 76.23
+    "Illegal Parking": 20.35,
+    "Noise - Residential": 26.09,
+    "HEAT/HOT WATER": 176.11,
+    "Blocked Driveway": 13.39,
+    "Noise - Street/Sidewalk": 68.4,
+    "UNSANITARY CONDITION": 1710.23,
+    "Street Condition": 99.25,
+    "PLUMBING": 63.3,
+    "Abandoned Vehicle": 6.57,
+    "Water System": 45.18,
+    "Dirty Condition": 15.42,
+    "Noise - Commercial": 75.98,
+    "Noise": 45.1,
+    "PAINT/PLASTER": 4999.72,
+    "Snow or Ice": 4999.83,
+    "Traffic Signal Condition": 1058.54,
+    "DOOR/WINDOW": 4999.76,
+    "Encampment": 44.72,
+    "Noise - Vehicle": 37.14,
+    "WATER LEAK": 4999.73,
+    "Other": 18.08,
+    "ALL": 20.97
   },
-  "nta_pooled": 58.74,
+  "nta_pooled": 35.94,
   "tract": {
-    "Illegal Parking": 315.16,
-    "Noise - Residential": 204.35,
-    "HEAT/HOT WATER": 4999.68,
-    "Blocked Driveway": 4999.69,
-    "Noise - Street/Sidewalk": 333.54,
-    "UNSANITARY CONDITION": 4999.77,
-    "Street Condition": 4999.78,
-    "PLUMBING": 4999.67,
-    "Abandoned Vehicle": 4999.82,
-    "Water System": 4999.73,
-    "Dirty Condition": 4999.74,
-    "Noise - Commercial": 4999.77,
-    "Noise": 2706.96,
-    "PAINT/PLASTER": 4999.76,
-    "Snow or Ice": 4999.81,
-    "Traffic Signal Condition": 4999.82,
-    "DOOR/WINDOW": 4999.83,
-    "Encampment": 4999.72,
-    "Noise - Vehicle": 4999.74,
-    "WATER LEAK": 4999.81,
-    "Other": 117.91,
-    "ALL": 135.43
+    "Illegal Parking": 4999.8,
+    "Noise - Residential": 4999.82,
+    "HEAT/HOT WATER": 171.81,
+    "Blocked Driveway": 4999.68,
+    "Noise - Street/Sidewalk": 4999.81,
+    "UNSANITARY CONDITION": 4999.79,
+    "Street Condition": 4999.71,
+    "PLUMBING": 287.51,
+    "Abandoned Vehicle": 4999.76,
+    "Water System": 270.0,
+    "Dirty Condition": 1279.2,
+    "Noise - Commercial": 4999.74,
+    "Noise": 169.69,
+    "PAINT/PLASTER": 4999.78,
+    "Snow or Ice": 4999.67,
+    "Traffic Signal Condition": 4999.79,
+    "DOOR/WINDOW": 4999.78,
+    "Encampment": 4999.78,
+    "Noise - Vehicle": 4999.78,
+    "WATER LEAK": 4999.67,
+    "Other": 26.41,
+    "ALL": 26.96
   },
-  "tract_pooled": 214.05
+  "tract_pooled": 74.98
 }
 ```
 
@@ -143,19 +144,23 @@ not comparable._
   hierarchical configurations. Their intervals are also badly wrong (90% coverage 0.30–0.37; squared standardized
   residual 1.8–3.8 against a target of 1).
 - **This single split does not choose the decay setting.** Its lowest RPS is P5b (180-day
-  half-life), ahead of the shipped P5a (90 days) by 0.00012 (paired SE 0.00003); log-loss
-  points the other way (P5a 1.3383 vs P5b 1.3392). More importantly, the protocol trains once
+  half-life), ahead of the shipped P7a (90 days, per-threshold pooling) by 0.00007 (paired SE 0.00003); log-loss
+  points the other way (P7a 1.3403 vs P5b 1.3392 here, and P5a 1.3383). More importantly, the protocol trains once
   and predicts up to 12 months ahead, which penalizes short memory on the later months. The map
   is refit every week and only ever predicts the near future, so the decay setting is chosen
   with the rolling-origin evaluation instead ([rolling_evaluation.md](rolling_evaluation.md):
   refit at each month start, score that month, 11 months).
-- **Rolling-origin result: keep the 90-day half-life.** Half-lives from 45 to 180 days are
-  statistically tied with it (RPS differences 0.00000 to +0.00004, each within about 1.3
-  paired SEs of zero). A 365-day half-life is worse by 0.00014 ± 0.00005 and no decay at all by
-  0.00040 ± 0.00008. Decay matters; the exact value between 45 and 180 days does not.
+- **Rolling-origin result: per-threshold pooling and a 90-day half-life.** The per-threshold
+  model (P7a) beats the nine-bin model with the same decay by 0.00019 ± 0.00002 in RPS and
+  0.00084 ± 0.00016 in log-loss. Among nine-bin models, half-lives from 45 to 180 days are
+  statistically tied; for the per-threshold model 45 days is slightly better in RPS (−0.00010 ±
+  0.00003) but worse in log-loss (+0.0026 ± 0.0004) and 180 days is worse in both, so 90 days is kept.
+  A 365-day half-life (+0.00033 ± 0.00005 in the nine-bin model) and no decay (+0.00058 ± 0.00007) are worse.
+  Decay matters; the exact value between 45 and 180 days does not.
 - **Same-season-last-year blending: small, inconsistent, not adopted.** With two years of
-  history the best variant (β = 0.5) improves RPS by 0.00013 ± 0.00004 and log-loss by
-  0.00176 ± 0.00038, but it wins in only 5 of the 11 months (clear gains in
+  history the best variant (β = 0.5) improves the nine-bin model's RPS by 0.00013 ± 0.00004 and log-loss by
+  0.00176 ± 0.00038 (measured against the nine-bin reference; against the shipped per-threshold model it is
+  RPS +0.00005 ± 0.00004, log-loss −0.0009 ± 0.0004), but it wins in only 5 of the 11 months (clear gains in
   December–February, small ones in May–June, losses in September–November, March–April and July), and β = 1.0 is worse on log-loss.
   Re-run `pipeline/eval_rolling.py` as more history accumulates.
 - **Sibling-only prior: no measurable gain on real data.** Excluding a unit's own counts from
@@ -171,21 +176,20 @@ not comparable._
 - **Interval calibration.** Intervals combine Dirichlet variance, the uncertainty of the
   neighborhood mean a tract borrows (needed for correct coverage when the model is exactly
   true: 43–81% without it in simulation), and a per-type regime variance fitted on rolling
-  training holdouts. Shipped configuration: 90% coverage 0.908 on cells with at least 50 test
+  training holdouts. Shipped configuration: 90% coverage 0.911 on cells with at least 50 test
   requests; on sparse cells (under 30 training requests, at least 10 test requests) the squared
-  standardized residual is 1.14 and 90.2% of cells fall inside their interval. In dense cells
-  the intervals are slightly wide (0.78; 94% coverage). On real data the regime term (median
-  0.09 across types, range 0.00–0.31) is far larger than the parent term (median SD 0.008 in
-  sparse cells, 90th percentile 0.03; under 1% of the variance at the median regime term), so for
-  most types the parent term barely changes what users see (median change in the 24-hour
-  interval width +0.001; 99th percentile +0.031). It matters where the regime term is near
-  zero: the largest changes, up to +0.145, are 1,575 Noise - Commercial cells in sparse
-  neighborhoods, whose old intervals were about ±0.007 even for cells with 2–15 requests
-  because they ignored the uncertainty of the neighborhood mean. Calibration for the six
-  types with almost no regime variance (the three noise types, Illegal Parking, Unsanitary
-  Condition, Blocked Driveway) has not been checked separately.
+  standardized residual is 1.05 and 90.7% of cells fall inside their interval. In dense cells
+  the intervals are slightly wide (0.70; 94% coverage). Follow-up checks
+  ([robustness_checks.md](robustness_checks.md), [interval_calibration_rolling.md](interval_calibration_rolling.md)):
+  by type, the six low-regime-variance types are fine except Noise - Street/Sidewalk (dense coverage 0.86);
+  types that fall back to the pooled regime variance (Street Condition, Dirty Condition, Water System) are
+  under-covered in this split (0.67–0.84), and a lower holdout threshold did not help under the deployed
+  protocol; under that protocol overall coverage is 0.874.
+  Other configurations' calibration columns changed slightly from earlier runs because the
+  regime variance is now estimated with the model's own structure.
 
-**Shipped configuration: P5a** — hierarchical Dirichlet–Multinomial cascade
-(tract→NTA→borough→city per complaint type, city×type rooted in city×ALL, global root
-Jeffreys ½), κ per (type, level) by bounded MLE on the DM marginal likelihood, 90-day
-exponential decay, regime-calibrated 90% intervals with the parent-uncertainty term.
+**Shipped configuration: P7a** — per-threshold hierarchical Dirichlet–Multinomial (eight
+two-category hierarchies tract→NTA→borough→city per complaint type, city×type rooted in
+city×ALL, global root Jeffreys ½), κ per (threshold, type, level) by bounded MLE, running maximum
+across thresholds, 90-day exponential decay, regime-calibrated 90% intervals with the
+parent-uncertainty term.

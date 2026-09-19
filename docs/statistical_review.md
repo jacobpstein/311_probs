@@ -231,15 +231,63 @@ points from duplicate handling alone).
    the shipped 90 days stays (365 days and no decay are worse).
 4. *The interval calibration holds in sparse cells.* For tract × type cells with under 30
    training requests and at least 10 test requests, the squared standardized residual is 1.14
-   and 90.2% fall inside their interval; dense cells are 0.78 and 94%.
+   and 90.2% fall inside their interval; dense cells are 0.78 and 94% (for the model shipped at
+   the time; section 9 gives the figures for the current one).
 
-**Candidates evaluated and not adopted.** Same-season-last-year blending (RPS −0.00013, wins
-5 of 11 months); a sibling-only prior (no predictive gain); a separate pooling strength per
-threshold (log-loss better at all eight thresholds by 0.06–0.32%, marginal for the
-all-complaints view, worse for some types; `cutwise_evaluation.md`). The last is the only
-candidate with a consistent, if small, gain and would need a new model class; it is documented
-as an option.
+**Candidates evaluated at that point.** Same-season-last-year blending (RPS −0.00013, wins
+5 of 11 months) and a sibling-only prior (no predictive gain) were not adopted. A separate
+pooling strength per threshold (log-loss better at all eight thresholds by 0.06–0.32%,
+marginal for the all-complaints view, worse for some types; `cutwise_evaluation.md`) was held
+back at that point and adopted afterwards (section 9).
 
-**Still open.** Whether correlated outcomes within cells explain the dense-cell interval
-shortfall found in section 3; calibration for the six types with almost no regime variance;
-a repeat of the batch-closure sensitivity from section 6 item 4.
+**Open items from this audit** were closed in section 9.
+
+## 9. Per-threshold model shipped; open items closed (2026-09)
+
+**Change.** The production model is now the per-threshold hierarchy (P7a): eight independent
+two-category Dirichlet hierarchies with their own concentrations, a running maximum for
+monotonicity, and differencing (floor 10⁻⁶) for bin probabilities. Reason: the map should show
+the variation the data support, and one strength shared across nine bins over-pooled the
+24-hour rate (section 8 finding 2, and the Stan check). Evidence: rolling-origin RPS −0.00019
+± 0.00002 and log-loss −0.00084 ± 0.00016 against the nine-bin model with the same decay
+(`rolling_evaluation.md`); log-loss better at every threshold (`cutwise_evaluation.md`);
+within-borough spread of P(≤24h) up 2–3× for Heat/Hot Water, Water System, Encampment and
+Street Condition. Single-split log-loss is marginally worse (1.3403 against 1.3383) and RPS
+marginally better (0.10297 against 0.10302); 90% coverage 0.911, sparse-cell z² 1.05, dense
+0.70. `audit.py` now re-implements the per-threshold hierarchies independently and matches
+all 51,150 cells (max difference 0.0005); `validate_export.py` still checks sums, monotonicity
+and interval bracketing.
+
+**Concentrations from raw counts (tested, not adopted).** On current data the decay-weighted
+fit put several 24-hour tract concentrations at the 5,000 ceiling where the raw-count fit
+gave 43–57 (Street Condition 5,000 against 57, Water System 5,000 against 43). Using the
+raw-count concentrations with the decayed posterior predicts no better (`kappa_source_evaluation.md`:
+for the cutwise model log-loss changes by −0.00013 at 3 hours to +0.00015 at one week, mixed in sign,
+and is identical for the all-complaints view; scaling the raw concentrations by the decay's mass ratio is worse),
+so the decay-weighted fit is kept. The ceiling values remain an artifact-prone quantity (§8
+item 2) and should not be read as "no local signal".
+
+**Open items, resolved.**
+
+1. *Correlated outcomes and the even/odd shortfall.* Mostly a comparison artifact plus day
+   clustering: coverage 0.69 against the true-rate interval, 0.89 once the held-out half's own
+   noise is included, 0.90 with sampling variance inflated by the measured day-clustering
+   (dispersion 1.29 pooled, 3.25 for Snow or Ice). Batch closures are not the cause (no change
+   from removing them). The original 0.51 was not reproduced with the old code.
+2. *Types with almost no regime variance.* Fine for four of the six and Unsanitary Condition
+   (dense coverage 0.91–0.96); Noise - Street/Sidewalk is under-covered (0.86, z² 1.8) at a rate
+   near 99.5% with day clustering (dispersion 1.74) and is left as a known limit. The check also
+   exposed that thin types (Street Condition, Dirty Condition, Water System) use the pooled
+   regime variance and are under-covered in the single split (0.67–0.84); lowering the holdout
+   cell threshold to 20 fixes those but not net under the deployed protocol
+   (`interval_calibration_rolling.md`: coverage 0.874 at both settings, mean z² worse at 20), so
+   it stays at 50. **New limitation:** under the deployed protocol overall coverage of nominal
+   90% intervals is 0.874, well below the single split's 0.911, driven by Snow or Ice (0.11 on
+   119 cells) and by the largest type group, Other (0.86).
+3. *Batch-closure sensitivity.* Excluding flagged requests from training changes the
+   all-complaints citywide 24-hour figure from 58.6% to 59.9%, borough-by-type figures by at
+   most 2.1 points and the tract map by 1.06 points on average (rank correlation 0.9975);
+   predictions for unflagged requests improve negligibly (log-loss −0.0004) and for all
+   requests worsen (+0.0014). Flagged requests concentrate in HPD (5.0% of its requests) and DOB
+   (18.4%) and in Water Leak, Door/Window, Plumbing, Unsanitary Condition and Paint/Plaster
+   (7–10% each). They are kept, as specified; `robustness_checks.md`.

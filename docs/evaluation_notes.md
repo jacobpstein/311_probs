@@ -12,19 +12,23 @@ not comparable._
   hierarchical configurations. Their intervals are also badly wrong (90% coverage 0.30–0.37; squared standardized
   residual 1.8–3.8 against a target of 1).
 - **This single split does not choose the decay setting.** Its lowest RPS is P5b (180-day
-  half-life), ahead of the shipped P5a (90 days) by 0.00012 (paired SE 0.00003); log-loss
-  points the other way (P5a 1.3383 vs P5b 1.3392). More importantly, the protocol trains once
+  half-life), ahead of the shipped P7a (90 days, per-threshold pooling) by 0.00007 (paired SE 0.00003); log-loss
+  points the other way (P7a 1.3403 vs P5b 1.3392 here, and P5a 1.3383). More importantly, the protocol trains once
   and predicts up to 12 months ahead, which penalizes short memory on the later months. The map
   is refit every week and only ever predicts the near future, so the decay setting is chosen
   with the rolling-origin evaluation instead ([rolling_evaluation.md](rolling_evaluation.md):
   refit at each month start, score that month, 11 months).
-- **Rolling-origin result: keep the 90-day half-life.** Half-lives from 45 to 180 days are
-  statistically tied with it (RPS differences 0.00000 to +0.00004, each within about 1.3
-  paired SEs of zero). A 365-day half-life is worse by 0.00014 ± 0.00005 and no decay at all by
-  0.00040 ± 0.00008. Decay matters; the exact value between 45 and 180 days does not.
+- **Rolling-origin result: per-threshold pooling and a 90-day half-life.** The per-threshold
+  model (P7a) beats the nine-bin model with the same decay by 0.00019 ± 0.00002 in RPS and
+  0.00084 ± 0.00016 in log-loss. Among nine-bin models, half-lives from 45 to 180 days are
+  statistically tied; for the per-threshold model 45 days is slightly better in RPS (−0.00010 ±
+  0.00003) but worse in log-loss (+0.0026 ± 0.0004) and 180 days is worse in both, so 90 days is kept.
+  A 365-day half-life (+0.00033 ± 0.00005 in the nine-bin model) and no decay (+0.00058 ± 0.00007) are worse.
+  Decay matters; the exact value between 45 and 180 days does not.
 - **Same-season-last-year blending: small, inconsistent, not adopted.** With two years of
-  history the best variant (β = 0.5) improves RPS by 0.00013 ± 0.00004 and log-loss by
-  0.00176 ± 0.00038, but it wins in only 5 of the 11 months (clear gains in
+  history the best variant (β = 0.5) improves the nine-bin model's RPS by 0.00013 ± 0.00004 and log-loss by
+  0.00176 ± 0.00038 (measured against the nine-bin reference; against the shipped per-threshold model it is
+  RPS +0.00005 ± 0.00004, log-loss −0.0009 ± 0.0004), but it wins in only 5 of the 11 months (clear gains in
   December–February, small ones in May–June, losses in September–November, March–April and July), and β = 1.0 is worse on log-loss.
   Re-run `pipeline/eval_rolling.py` as more history accumulates.
 - **Sibling-only prior: no measurable gain on real data.** Excluding a unit's own counts from
@@ -40,21 +44,20 @@ not comparable._
 - **Interval calibration.** Intervals combine Dirichlet variance, the uncertainty of the
   neighborhood mean a tract borrows (needed for correct coverage when the model is exactly
   true: 43–81% without it in simulation), and a per-type regime variance fitted on rolling
-  training holdouts. Shipped configuration: 90% coverage 0.908 on cells with at least 50 test
+  training holdouts. Shipped configuration: 90% coverage 0.911 on cells with at least 50 test
   requests; on sparse cells (under 30 training requests, at least 10 test requests) the squared
-  standardized residual is 1.14 and 90.2% of cells fall inside their interval. In dense cells
-  the intervals are slightly wide (0.78; 94% coverage). On real data the regime term (median
-  0.09 across types, range 0.00–0.31) is far larger than the parent term (median SD 0.008 in
-  sparse cells, 90th percentile 0.03; under 1% of the variance at the median regime term), so for
-  most types the parent term barely changes what users see (median change in the 24-hour
-  interval width +0.001; 99th percentile +0.031). It matters where the regime term is near
-  zero: the largest changes, up to +0.145, are 1,575 Noise - Commercial cells in sparse
-  neighborhoods, whose old intervals were about ±0.007 even for cells with 2–15 requests
-  because they ignored the uncertainty of the neighborhood mean. Calibration for the six
-  types with almost no regime variance (the three noise types, Illegal Parking, Unsanitary
-  Condition, Blocked Driveway) has not been checked separately.
+  standardized residual is 1.05 and 90.7% of cells fall inside their interval. In dense cells
+  the intervals are slightly wide (0.70; 94% coverage). Follow-up checks
+  ([robustness_checks.md](robustness_checks.md), [interval_calibration_rolling.md](interval_calibration_rolling.md)):
+  by type, the six low-regime-variance types are fine except Noise - Street/Sidewalk (dense coverage 0.86);
+  types that fall back to the pooled regime variance (Street Condition, Dirty Condition, Water System) are
+  under-covered in this split (0.67–0.84), and a lower holdout threshold did not help under the deployed
+  protocol; under that protocol overall coverage is 0.874.
+  Other configurations' calibration columns changed slightly from earlier runs because the
+  regime variance is now estimated with the model's own structure.
 
-**Shipped configuration: P5a** — hierarchical Dirichlet–Multinomial cascade
-(tract→NTA→borough→city per complaint type, city×type rooted in city×ALL, global root
-Jeffreys ½), κ per (type, level) by bounded MLE on the DM marginal likelihood, 90-day
-exponential decay, regime-calibrated 90% intervals with the parent-uncertainty term.
+**Shipped configuration: P7a** — per-threshold hierarchical Dirichlet–Multinomial (eight
+two-category hierarchies tract→NTA→borough→city per complaint type, city×type rooted in
+city×ALL, global root Jeffreys ½), κ per (threshold, type, level) by bounded MLE, running maximum
+across thresholds, 90-day exponential decay, regime-calibrated 90% intervals with the
+parent-uncertainty term.

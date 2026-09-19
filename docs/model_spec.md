@@ -17,8 +17,14 @@ material under-coverage that parent-uncertainty propagation alone would not fix;
 than re-derived, per §6.10; (5) production refits the whole model every week on a rolling
 two-year window instead of the incremental update of §8, which is not implemented; and (6) the
 decay half-life is confirmed with a rolling-origin evaluation (§7.1's single split favors long
-memory). See `statistical_review.md` §8. Everything else (hierarchy, censoring, hygiene) ships
-as specified.
+memory). See `statistical_review.md` §8. A seventh change was made afterwards (`statistical_review.md`
+§9): the production model fits **one two-category hierarchy per cumulative threshold** (bins ≤ c
+versus later, each with its own κ at every level; a Dirichlet merged over categories is a
+Dirichlet with summed parameters), makes the eight cumulative means non-decreasing with a
+running maximum, and obtains bin probabilities by differencing with a 10⁻⁶ floor. The nine-bin
+cascade of §1.3 remains the model for every threshold's structure, only fitted eight times on
+merged counts; §2 (κ estimation) applies per threshold. Everything else (hierarchy,
+censoring, hygiene) ships as specified.
 
 ---
 

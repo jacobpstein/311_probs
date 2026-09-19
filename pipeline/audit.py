@@ -2,8 +2,8 @@
 
 Independent of the production estimator: its own count accumulation (pandas
 groupby, not np.add.at), its own concentration search (dense grid + refinement,
-not scipy's bounded optimizer), and the Dirichlet-Multinomial likelihood checked
-against scipy.stats.dirichlet_multinomial. Every tract x type cell is compared,
+not scipy's bounded optimizer), its own per-threshold hierarchy and monotone/floor
+rules, and the Dirichlet-Multinomial likelihood checked against scipy.stats.dirichlet_multinomial. Every tract x type cell is compared,
 not a sample.
 
     python pipeline/audit.py
@@ -121,7 +121,7 @@ def fit_kappa_grid(n, m):
 
 
 def cascade(prep, probs, meta, types_named, lookup, half_life=90.0):
-    print("\n[4] Independent re-implementation of the cascade (all cells)", flush=True)
+    print("\n[4] Independent re-implementation of the per-threshold hierarchies (all cells)", flush=True)
     types = types_named + ["Other"]; T = len(types)
     tracts = sorted(lookup); tix = {g: i for i, g in enumerate(tracts)}
     ntas = sorted({v["nta"] for v in lookup.values()}); nix = {a: i for i, a in enumerate(ntas)}
@@ -157,19 +157,36 @@ def cascade(prep, probs, meta, types_named, lookup, half_life=90.0):
     C_c = dense(np.zeros(len(prep), int), 1, np.ones(len(prep), bool))
 
     norm = lambda x: x / x.sum(-1, keepdims=True)
-    a_city = np.zeros((T + 1, K)); a_city[T] = 0.5 + C_c[0, T]
-    m_all = norm(a_city[T]); a_city[:T] = 5.0 * m_all + C_c[0, :T]; m_city = norm(a_city)
+
+    def merge(C, c):                       # two categories: bins <= c vs later
+        return np.stack([C[..., :c + 1].sum(-1), C[..., c + 1:].sum(-1)], -1)
 
     def kappas(C, pm):
+        Kc = C.shape[-1]
         ks = np.array([fit_kappa_grid(C[:, ti, :], pm[:, ti, :]) or np.nan for ti in range(T + 1)])
-        pooled = fit_kappa_grid(C[:, :T, :].reshape(-1, K), pm[:, :T, :].reshape(-1, K)) or 50.0
+        pooled = fit_kappa_grid(C[:, :T, :].reshape(-1, Kc), pm[:, :T, :].reshape(-1, Kc)) or 50.0
         return np.where(np.isnan(ks), pooled, ks)
 
-    pm_b = np.repeat(m_city[None], len(boros), 0)
-    k1 = kappas(C_b, pm_b); a_b = k1[None, :, None] * pm_b + C_b; m_b = norm(a_b)
-    pm_a = m_b[n_boro]; k2 = kappas(C_a, pm_a); a_a = k2[None, :, None] * pm_a + C_a; m_a = norm(a_a)
-    pm_t = m_a[t_nta]; k3 = kappas(C_t, pm_t); a_t = k3[None, :, None] * pm_t + C_t
-    bp = norm(a_t)
+    cum_t = np.zeros((len(tracts), T + 1, K - 1)); cum_c = np.zeros((T + 1, K - 1)); k3_by_cut = []
+    for c in range(K - 1):                 # one independent hierarchy per threshold
+        Ct, Ca, Cb, Cc = (merge(x, c) for x in (C_t, C_a, C_b, C_c))
+        a_city = np.zeros((T + 1, 2)); a_city[T] = 0.5 + Cc[0, T]
+        a_city[:T] = 5.0 * norm(a_city[T]) + Cc[0, :T]; m_city = norm(a_city)
+        pm_b = np.repeat(m_city[None], len(boros), 0)
+        k1 = kappas(Cb, pm_b); m_b = norm(k1[None, :, None] * pm_b + Cb)
+        pm_a = m_b[n_boro]; k2 = kappas(Ca, pm_a); m_a = norm(k2[None, :, None] * pm_a + Ca)
+        pm_t = m_a[t_nta]; k3 = kappas(Ct, pm_t)
+        cum_t[..., c] = norm(k3[None, :, None] * pm_t + Ct)[..., 0]
+        cum_c[:, c] = m_city[:, 0]; k3_by_cut.append(k3)
+    mono = lambda x: np.maximum.accumulate(np.clip(x, 0, 1), axis=-1)   # thresholds must not decrease
+    cum_t, cum_c = mono(cum_t), mono(cum_c)
+
+    def to_bins(cum):                       # difference the cumulative curve; floor so no bin is exactly zero
+        bp = np.diff(np.concatenate([np.zeros(cum.shape[:-1] + (1,)), cum, np.ones(cum.shape[:-1] + (1,))], -1), axis=-1)
+        bp = np.maximum(bp, 1e-6)
+        return bp / bp.sum(-1, keepdims=True)
+    bp = to_bins(cum_t)
+    k3 = k3_by_cut[1]                       # shrinkage weight is reported at the 24-hour threshold
 
     ship_types = meta["types"]                                       # 'ALL' first
     slot = {t: (T if t == "ALL" else types.index(t)) for t in ship_types}
@@ -187,8 +204,7 @@ def cascade(prep, probs, meta, types_named, lookup, half_life=90.0):
     dsw = max(abs(probs[g][t]["sw"] - sw[i, slot[t]]) for i, g in enumerate(tracts) for t in ship_types)
     check(dsw < 0.0015, f"shrinkage weights match (max |diff| {dsw:.4f})")
     # reference profiles
-    cum = lambda x: np.cumsum(x, -1)[..., :-1]
-    dref = max(np.abs(np.array(meta["refs"]["city"][t]) - cum(norm(a_city[slot[t]]))).max() for t in ship_types)
+    dref = max(np.abs(np.array(meta["refs"]["city"][t]) - cum_c[slot[t]]).max() for t in ship_types)
     check(dref < 0.0015, f"citywide reference profiles match (max |diff| {dref:.4f})")
     info("independent kappa (tract level) for a few types: " +
          ", ".join(f"{t}={k3[slot[t]]:.0f}" for t in ["ALL", "HEAT/HOT WATER", "Illegal Parking"]))
