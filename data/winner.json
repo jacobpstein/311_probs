@@ -1,5 +1,6 @@
 {
-  "best": "P5a P4 + decay h=90d",
+  "lowest_rps_on_single_split": "P5b P4 + decay h=180d",
+  "shipped": "P5a P4 + decay h=90d",
   "types": [
     "Illegal Parking",
     "Noise - Residential",
@@ -7,20 +8,21 @@
     "Blocked Driveway",
     "Noise - Street/Sidewalk",
     "UNSANITARY CONDITION",
-    "Abandoned Vehicle",
     "Street Condition",
     "PLUMBING",
-    "Noise - Commercial",
-    "Dirty Condition",
+    "Abandoned Vehicle",
     "Water System",
+    "Dirty Condition",
+    "Noise - Commercial",
     "Noise",
     "PAINT/PLASTER",
-    "Encampment",
+    "Snow or Ice",
     "Traffic Signal Condition",
-    "Missed Collection",
     "DOOR/WINDOW",
-    "Derelict Vehicles",
+    "Encampment",
     "Noise - Vehicle",
+    "WATER LEAK",
     "Other"
-  ]
+  ],
+  "note": "the shipped configuration is chosen with the rolling-origin evaluation (docs/rolling_evaluation.md), which matches how the map is refreshed"
 }

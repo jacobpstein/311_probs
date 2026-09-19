@@ -8,8 +8,6 @@ data/prepared.parquet
 __pycache__/
 *.pyc
 
-# Local update state
-data/update_state.json
 
 # Historical raw + intermediate data (regenerable via pipeline/fetch_311_history.py)
 data/raw_hist/
@@ -18,3 +16,7 @@ data/prepared_hist/
 # Local deck exports / one-off documents — not part of the project
 deck_files.zip
 *.pdf
+
+# Compiled Stan programs (built locally by cmdstanpy)
+pipeline/stan/*
+!pipeline/stan/*.stan

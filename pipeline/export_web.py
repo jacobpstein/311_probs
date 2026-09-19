@@ -74,7 +74,7 @@ def main() -> None:
     # from rolling temporal holdouts (model.estimate_regime_sigma docstring)
     print("calibrating interval widths (rolling origins)...", flush=True)
     origins = [str((t_ref - pd.Timedelta(days=d)).date()) for d in (270, 210, 150, 90)]
-    sig = M.estimate_regime_sigma(df, geo, types, origins)
+    sig = M.estimate_regime_sigma(df, geo, types, origins, cfg=cfg)
     sigma_vec = np.array([sig["per_type"][t] for t in types + ["ALL"]])  # (T+1, 8)
     print("regime sigma at 24h cut:",
           {t: round(sig["per_type"][t][1], 3) for t in ["ALL", "HEAT/HOT WATER", "Illegal Parking"]},
@@ -100,7 +100,7 @@ def main() -> None:
     # 90% intervals on each of the 8 cumulative cuts: Dirichlet sampling variance
     # plus the calibrated additive regime variance (posterior means unaffected).
     mid_cum = a.cumsum(-1)[..., :-1] / A[..., None]                 # (n_tract, T+1, 8)
-    var_cum = mid_cum * (1 - mid_cum) / (A[..., None] + 1)
+    var_cum = fm.cum_variance()          # Dirichlet + uncertainty of the borrowed neighborhood mean
     hw = 1.645 * np.sqrt(var_cum + sigma_vec[None, :, :] ** 2)
     lo = np.clip(mid_cum - hw, 0, 1)
     hi = np.clip(mid_cum + hw, 0, 1)
@@ -173,12 +173,6 @@ def main() -> None:
         },
     }
     json.dump(meta, open(os.path.join(WEB_DATA, "meta.json"), "w"))
-
-    # persist the state the incremental updater (pipeline/update.py) resumes from
-    state = {"maturity_cutoff": t_ref.strftime("%Y-%m-%dT%H:%M:%S"),
-             "half_life_days": HALF_LIFE, "data_through": str(t_ref.date()),
-             "n_types": N_TYPES}
-    json.dump(state, open(os.path.join(ROOT, "data", "update_state.json"), "w"), indent=2)
 
     for fn in ["tracts.geojson", "probs.json", "meta.json"]:
         sz = os.path.getsize(os.path.join(WEB_DATA, fn)) / 1e6

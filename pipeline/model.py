@@ -8,6 +8,7 @@ likelihood with a pooled per-level fallback, optional exponential time decay of
 counts, and a regime-variance estimator for credible-interval calibration.
 """
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -21,6 +22,11 @@ KAPPA0 = 5.0   # city ALL -> city type
 KAPPA_MIN, KAPPA_MAX = 0.5, 5000.0
 
 
+# Include the parent-uncertainty term in interval variances. Set PARENT_TERM=0 only to
+# reproduce the pre-fix intervals for a before/after comparison (evaluate.py).
+PARENT_TERM = os.environ.get("PARENT_TERM", "1") != "0"
+
+
 @dataclass
 class Config:
     name: str
@@ -31,6 +37,7 @@ class Config:
     half_life_days: float | None = None
     seasonal_beta: float = 0.0          # weight of same-season-last-year kernel
     seasonal_bw_days: float = 45.0      # kernel half-life around age = 1 year
+    loo_parent: bool = False            # prior mean from siblings only (exclude the unit's own counts)
 
 
 CONFIGS = [
@@ -42,6 +49,7 @@ CONFIGS = [
     Config("P5a P4 + decay h=90d", half_life_days=90.0),
     Config("P5b P4 + decay h=180d", half_life_days=180.0),
     Config("P5c P4 + decay h=365d", half_life_days=365.0),
+    Config("P6a P5a + sibling-only prior", half_life_days=90.0, loo_parent=True),
 ]
 
 
@@ -149,7 +157,8 @@ def _normalize(a: np.ndarray) -> np.ndarray:
 
 def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
                           origins: list[str], horizon_days: int = 60,
-                          min_cell: int = 50, q: float = 0.90) -> dict:
+                          min_cell: int = 50, q: float = 0.90,
+                          cfg: "Config | None" = None) -> dict:
     """Per-type additive regime-variance for credible-interval calibration.
 
     The Dirichlet posterior interval covers sampling uncertainty about the current
@@ -173,7 +182,8 @@ def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
 
     Returns {"per_type": {type: [sigma at 8 cuts]}, "pooled": [8 cuts]}.
     """
-    cfg = Config("sigma-est", kappa_mode="per_type_level", half_life_days=90.0)
+    if cfg is None:
+        cfg = Config("sigma-est", kappa_mode="per_type_level", half_life_days=90.0)
     named = [t for t in types if t != "Other"]
     rows = []  # (type, cut, excess squared deviation)
     for o in origins:
@@ -204,7 +214,8 @@ def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
         ok = (gi >= 0) & (ti >= 0)
         mid = a.cumsum(-1)[..., :-1] / A[..., None]                   # (tract, T+1, 8)
         m = mid[gi[ok], ti[ok]]                                       # (cells, 8)
-        var0 = m * (1 - m) / (A[gi[ok], ti[ok], None] + 1)
+        cv = fm.cum_variance()                         # Dirichlet + parent-uncertainty variance
+        var0 = cv[gi[ok], ti[ok]]
         samp = var0 + m * (1 - m) / n_cell[ok, None]
         ex2 = np.maximum((emp_cum[ok] - m) ** 2 - samp, 0.0)
         tnames = ct.index.get_level_values(1).to_numpy()[ok]
@@ -222,7 +233,7 @@ def estimate_regime_sigma(df: pd.DataFrame, geo: "GeoIndex", types: list[str],
         ok2 = gi2 >= 0
         T = len(types)
         m2 = mid[gi2[ok2], T]
-        samp2 = m2 * (1 - m2) / (A[gi2[ok2], T, None] + 1) + m2 * (1 - m2) / n2[ok2, None]
+        samp2 = cv[gi2[ok2], T] + m2 * (1 - m2) / n2[ok2, None]
         ex2b = np.maximum((emp2[ok2] - m2) ** 2 - samp2, 0.0)
         for cut in range(K - 1):
             rows.extend(zip(["ALL"] * int(ok2.sum()), [cut] * int(ok2.sum()), ex2b[:, cut]))
@@ -244,7 +255,7 @@ class FittedModel:
     """Posterior Dirichlet parameters at every level, plus diagnostics."""
 
     def __init__(self, geo: GeoIndex, types: list[str], a_tract, a_nta, a_boro, a_city,
-                 n_tract_dec, R_tract, kappa3, kappa_table):
+                 n_tract_dec, R_tract, kappa3, kappa_table, pm_tract=None, A_parent=None):
         self.geo = geo
         self.types = types            # named types (+ 'Other'); index T = ALL
         self.a_tract = a_tract        # (n_tract, T+1, K)
@@ -255,9 +266,30 @@ class FittedModel:
         self.R_tract = R_tract          # raw counts (n_tract, T+1, K)
         self.kappa3 = kappa3            # (T+1,) tract-level kappa per type
         self.kappa_table = kappa_table  # {level: {type: kappa}} for reporting
+        self.pm_tract = pm_tract        # prior mean each tract borrows (n_tract, T+1, K), or None
+        self.A_parent = A_parent        # total Dirichlet mass behind that prior mean (n_tract, T+1)
 
     def tract_probs(self) -> np.ndarray:
         return _normalize(self.a_tract)
+
+    def cum_variance(self) -> np.ndarray:
+        """Variance of each cumulative probability P(bin <= c), c = 0..K-2 -> (n_tract, T+1, K-1).
+
+        The tract posterior is Dirichlet(kappa*m_parent + counts) given the parent mean, whose
+        variance is the usual m(1-m)/(A+1). The parent mean is itself estimated (the plug-in
+        cascade ignores that), and the tract inherits a share kappa/A of it, so its uncertainty
+        adds (kappa/A)^2 * Var(parent). With strong pooling and a modest neighborhood that
+        term dominates; without it, nominal 90% intervals covered 43-81% in simulation.
+        """
+        A = self.a_tract.sum(-1)
+        m = self.a_tract.cumsum(-1)[..., :-1] / A[..., None]
+        var = m * (1 - m) / (A[..., None] + 1)
+        if not PARENT_TERM or self.pm_tract is None or self.A_parent is None:
+            return var
+        mp = np.cumsum(self.pm_tract, -1)[..., :-1]
+        var_parent = mp * (1 - mp) / (self.A_parent[..., None] + 1)
+        w = (self.kappa3[None, :] / A)[..., None]
+        return var + w ** 2 * var_parent
 
     def shrinkage(self) -> np.ndarray:
         return self.n_tract_dec / (self.n_tract_dec + self.kappa3[None, :])
@@ -267,13 +299,27 @@ def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
         t_ref: pd.Timestamp, frozen_kappa: dict | None = None) -> FittedModel:
     """Fit one configuration. df must have columns ctype, bin, created_date, geoid, boro.
 
-    frozen_kappa: optional {"boro"|"nta"|"tract": array (T+1,)} — skips EB estimation
-    (the §8 incremental-update path re-runs the cascade with the stored kappa table).
+    frozen_kappa: optional {"boro"|"nta"|"tract": array (T+1,)} — skips EB estimation and uses the
+    supplied concentrations (sim_check.py supplies the true ones).
     """
     C_tract, C_nta, C_boro, C_city, R_tract = count_tensors(
         df, geo, types, t_ref, cfg.half_life_days,
         cfg.seasonal_beta, cfg.seasonal_bw_days)
+    return fit_from_counts(C_tract, C_nta, C_boro, C_city, R_tract, geo, types, cfg, frozen_kappa)
+
+
+def merge_at_cut(C: np.ndarray, cut: int) -> np.ndarray:
+    """Merge the last axis of a count tensor into two categories: bins <= cut vs later.
+    Merging categories of a Dirichlet gives a Dirichlet with summed parameters, so the
+    hierarchy can be fitted on the merged counts without changing its structure."""
+    return np.stack([C[..., :cut + 1].sum(-1), C[..., cut + 1:].sum(-1)], axis=-1)
+
+
+def fit_from_counts(C_tract, C_nta, C_boro, C_city, R_tract, geo: GeoIndex, types: list[str],
+                    cfg: Config, frozen_kappa: dict | None = None) -> FittedModel:
+    """The cascade on precomputed count tensors (any number of categories on the last axis)."""
     T = len(types)
+    Kc = C_tract.shape[-1]
 
     if not cfg.hierarchy:
         a_tract = cfg.flat_alpha + C_tract
@@ -281,7 +327,7 @@ def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
         return FittedModel(geo, types, a_tract, cfg.flat_alpha + C_nta,
                            cfg.flat_alpha + C_boro, cfg.flat_alpha + C_city,
                            C_tract.sum(-1), R_tract,
-                           np.full(T + 1, cfg.flat_alpha * K), {"mode": "none"})
+                           np.full(T + 1, cfg.flat_alpha * Kc), {"mode": "none"})
 
     # --- top of cascade ---
     a_city = np.zeros_like(C_city)
@@ -309,8 +355,8 @@ def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
         for ti in range(T + 1):
             ks[ti] = fit_kappa(C[:, ti, :], parent_mean[:, ti, :]) or np.nan
         # pooled fallback: all named-type children at this level jointly (§2.3)
-        pooled = fit_kappa(C[:, :T, :].reshape(-1, K),
-                           parent_mean[:, :T, :].reshape(-1, K)) or 50.0
+        pooled = fit_kappa(C[:, :T, :].reshape(-1, Kc),
+                           parent_mean[:, :T, :].reshape(-1, Kc)) or 50.0
         ks = np.where(np.isnan(ks), pooled, ks)
         table[lvl] = {types[ti] if ti < T else "ALL": round(float(ks[ti]), 2) for ti in range(T + 1)}
         table[lvl + "_pooled"] = round(float(pooled), 2)
@@ -322,18 +368,25 @@ def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
     a_boro = k1[None, :, None] * pm_boro + C_boro
     m_boro = _normalize(a_boro)
 
-    # NTA level
+    # NTA level. With loo_parent the prior mean is the borough posterior *minus this NTA's
+    # own counts*, so a unit is never part of the evidence for its own prior (the plain
+    # cascade double-counts it, and that also biases the pooling strength upward).
     pm_nta = m_boro[geo.nta_parent]
+    if cfg.loo_parent:
+        pm_nta = _normalize(np.maximum(a_boro[geo.nta_parent] - C_nta, 1e-9))
     k2 = estimate_level("nta", C_nta, pm_nta)
     a_nta = k2[None, :, None] * pm_nta + C_nta
     m_nta = _normalize(a_nta)
 
     # tract level
     pm_tract = m_nta[geo.tract_parent]
+    if cfg.loo_parent:
+        pm_tract = _normalize(np.maximum(a_nta[geo.tract_parent] - C_tract, 1e-9))
     k3 = estimate_level("tract", C_tract, pm_tract)
     a_tract = k3[None, :, None] * pm_tract + C_tract
 
     if cfg.kappa_mode == "per_type":
+        assert not cfg.loo_parent, "loo_parent is implemented for kappa_mode='per_type_level' only"
         # single kappa per type shared across levels, fitted on NTA->tract children
         k1, k2 = k3.copy(), k3.copy()
         a_boro = k1[None, :, None] * pm_boro + C_boro
@@ -344,5 +397,8 @@ def fit(df: pd.DataFrame, geo: GeoIndex, types: list[str], cfg: Config,
         pm_tract = m_nta[geo.tract_parent]
         a_tract = k3[None, :, None] * pm_tract + C_tract
 
+    parent_params = a_nta[geo.tract_parent] - (C_tract if cfg.loo_parent else 0.0)
+    A_parent = np.maximum(parent_params, 1e-9).sum(-1)
     return FittedModel(geo, types, a_tract, a_nta, a_boro, a_city,
-                       C_tract.sum(-1), R_tract, k3, table)
+                       C_tract.sum(-1), R_tract, k3, table,
+                       pm_tract=_normalize(np.maximum(parent_params, 1e-9)), A_parent=A_parent)

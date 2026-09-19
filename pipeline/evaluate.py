@@ -20,6 +20,7 @@ import model as M
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 N_TYPES = 20
 TRAIN_DAYS = 365
+SHIPPED = "P5a P4 + decay h=90d"
 
 
 def load() -> tuple[pd.DataFrame, M.GeoIndex]:
@@ -38,8 +39,9 @@ def cumulative_A(a: np.ndarray, upto: int) -> np.ndarray:
 
 
 def predictions_for(fm: M.FittedModel, geo: M.GeoIndex, type_ix: dict,
-                    test: pd.DataFrame) -> np.ndarray:
-    """Per-test-request Dirichlet params from its tract x type cell (n_test, K)."""
+                    test: pd.DataFrame):
+    """Per-test-request Dirichlet params from its tract x type cell (n_test, K), and the
+    variance of that cell's P(<=24h) including the parent-uncertainty term."""
     ti = test["ctype"].map(type_ix).to_numpy()
     gi = test["geoid"].map(geo.tract_ix)
     # tract-assigned rows -> tract posterior; unmapped -> borough posterior
@@ -49,7 +51,12 @@ def predictions_for(fm: M.FittedModel, geo: M.GeoIndex, type_ix: dict,
     a[has_tract] = fm.a_tract[gi_f[has_tract], ti[has_tract]]
     bi = test["boro"].map(geo.boro_ix).fillna(0).astype(int).to_numpy()
     a[~has_tract] = fm.a_boro[bi[~has_tract], ti[~has_tract]]
-    return a
+    var24 = np.empty(len(test))
+    var24[has_tract] = fm.cum_variance()[gi_f[has_tract], ti[has_tract], 1]
+    ab = a[~has_tract]
+    mb = ab[:, :2].sum(1) / ab.sum(1)
+    var24[~has_tract] = mb * (1 - mb) / (ab.sum(1) + 1)     # borough fallback: no parent term
+    return a, var24
 
 
 def score(a: np.ndarray, y: np.ndarray) -> dict:
@@ -80,7 +87,7 @@ def evaluate_config(cfg: M.Config, train: pd.DataFrame, test: pd.DataFrame,
                     t_ref: pd.Timestamp, train_cell_n: pd.Series,
                     sigma24: dict | None = None):
     fm = M.fit(train, geo, types, cfg, t_ref)
-    a = predictions_for(fm, geo, type_ix, test)
+    a, var24 = predictions_for(fm, geo, type_ix, test)
     y = test["bin"].to_numpy()
     s = score(a, y)
 
@@ -95,11 +102,14 @@ def evaluate_config(cfg: M.Config, train: pd.DataFrame, test: pd.DataFrame,
     # stratify by training-cell raw count
     cell_key = list(zip(test["geoid"], test["ctype"]))
     n_train = np.array([train_cell_n.get(k, 0) for k in cell_key])
+    # strata describe tract x type cells; requests with no tract (~1.6%) are scored from
+    # borough-level data and belong to 'all' only, so 'n=0' means an unseen tract x type cell
+    has_t = test["geoid"].notna().to_numpy()
     strata = {
         "all": np.ones(len(y), bool),
-        "n=0": n_train == 0,
-        "n<30": (n_train > 0) & (n_train < 30),
-        "n>=30": n_train >= 30,
+        "n=0": has_t & (n_train == 0),
+        "n<30": has_t & (n_train > 0) & (n_train < 30),
+        "n>=30": has_t & (n_train >= 30),
     }
     res = {"name": cfg.name, "kappa_table": fm.kappa_table}
     for sn, mask in strata.items():
@@ -116,7 +126,7 @@ def evaluate_config(cfg: M.Config, train: pd.DataFrame, test: pd.DataFrame,
     A = a.sum(1)
     Ac = cumulative_A(a, 2)
     mid = Ac / A
-    var0 = mid * (1 - mid) / (A + 1)
+    var0 = var24
     if sigma24 is not None and cfg.hierarchy:
         sv = np.array([sigma24.get(t, sigma24["__pooled__"]) for t in test["ctype"]])
     else:
@@ -131,6 +141,22 @@ def evaluate_config(cfg: M.Config, train: pd.DataFrame, test: pd.DataFrame,
             emp = g["hit24"].mean()
             cov_rows.append(g["lo"].iloc[0] <= emp <= g["hi"].iloc[0])
     res["cov90"] = float(np.mean(cov_rows)) if cov_rows else float("nan")
+
+    # Interval calibration in SPARSE cells, where the check above cannot reach: for tract x type
+    # cells with >=10 test requests, standardise the observed P(<=24h) by the model's predictive
+    # variance (latent variance incl. regime term + binomial noise). If intervals are right the
+    # squared z-scores average 1 and ~90% of |z| fall under 1.645. Stratified by TRAIN count.
+    zdf = pd.DataFrame({"geoid": test["geoid"].to_numpy(), "key": cell_key, "hit": hit_24, "mid": mid,
+                        "var": var0 + sv ** 2, "ntr": n_train})
+    zdf = zdf[zdf["geoid"].notna()]
+    zg = zdf.groupby("key").agg(n=("hit", "size"), obs=("hit", "mean"), mid=("mid", "first"),
+                                var=("var", "first"), ntr=("ntr", "first"))
+    zg = zg[zg["n"] >= 10]
+    z = (zg["obs"] - zg["mid"]) / np.sqrt(zg["var"] + zg["mid"] * (1 - zg["mid"]) / zg["n"])
+    for name, msk in {"n<30": zg["ntr"] < 30, "n>=30": zg["ntr"] >= 30}.items():
+        res[f"z2_{name}"] = float((z[msk] ** 2).mean()) if msk.any() else float("nan")
+        res[f"zcov_{name}"] = float((z[msk].abs() <= 1.645).mean()) if msk.any() else float("nan")
+        res[f"zn_{name}"] = int(msk.sum())
 
     # per-request rps for bootstrap, keyed by cell (as flat string keys)
     key_str = np.array([f"{g}|{c}" for g, c in cell_key], dtype=object)
@@ -167,7 +193,12 @@ def main() -> None:
     test = df[df["created_date"] >= split].copy()
     print(f"train {len(train):,} ({d0.date()}..{split.date()}) | test {len(test):,}", flush=True)
 
-    top_types = train["complaint_type"].value_counts().nlargest(N_TYPES).index.tolist()
+    # evaluate the production configuration: the pinned type list when present
+    types_file = os.path.join(ROOT, "pipeline", "types.json")
+    if os.path.exists(types_file):
+        top_types = json.load(open(types_file))["types"]
+    else:
+        top_types = train["complaint_type"].value_counts().nlargest(N_TYPES).index.tolist()
     types = top_types + ["Other"]
     type_ix = {t: i for i, t in enumerate(types)}
     train["ctype"] = M.collapse_types(train["complaint_type"], top_types)
@@ -182,29 +213,37 @@ def main() -> None:
 
     # interval calibration on TRAIN only (origins + 60d horizons all precede split)
     origins = [str((split - pd.Timedelta(days=d)).date()) for d in (270, 210, 150, 90)]
-    sig = M.estimate_regime_sigma(train, geo, types, origins)
-    sigma24 = {t: v[1] for t, v in sig["per_type"].items()}
-    sigma24["__pooled__"] = sig["pooled"][1]
-    print(f"regime sigma (train, 24h cut): pooled={sig['pooled'][1]:.3f}", flush=True)
+    sigma_by_loo = {}
+    for loo in (False, True):       # the calibration must use the same prior structure as the model it serves
+        sig = M.estimate_regime_sigma(train, geo, types, origins, cfg=M.Config(
+            "sigma-est", kappa_mode="per_type_level", half_life_days=90.0, loo_parent=loo))
+        sg = {t: v[1] for t, v in sig["per_type"].items()}
+        sg["__pooled__"] = sig["pooled"][1]
+        sigma_by_loo[loo] = sg
+        print(f"regime sigma (train, 24h cut, sibling-only={loo}): pooled={sig['pooled'][1]:.3f}", flush=True)
 
     results, rps_by_cfg, cell_keys = [], {}, None
     for cfg in M.CONFIGS:
         t0 = time.time()
         r, rps, keys = evaluate_config(cfg, train, test, geo, types, type_ix, t_ref, tcn,
-                                       sigma24=sigma24)
+                                       sigma24=sigma_by_loo[cfg.loo_parent])
         results.append(r)
         rps_by_cfg[cfg.name] = rps
         cell_keys = keys
         print(f"{cfg.name:.<40} RPS={r['rps_all']:.5f} LL={r['ll_all']:.4f} "
-              f"ECE24={r['ece_24']:.4f} cov={r['cov90']:.3f} ({time.time()-t0:.0f}s)", flush=True)
+              f"ECE24={r['ece_24']:.4f} cov={r['cov90']:.3f} | sparse cells: z2={r['z2_n<30']:.2f} "
+              f"cov={r['zcov_n<30']:.3f} (n={r['zn_n<30']}) | dense: z2={r['z2_n>=30']:.2f} "
+              f"cov={r['zcov_n>=30']:.3f} ({time.time()-t0:.0f}s)", flush=True)
 
     best = min(results, key=lambda r: r["rps_all"])["name"]
     se, dse = paired_bootstrap(rps_by_cfg, cell_keys, best)
 
     write_report(results, se, dse, best, train, test, d0, split, types)
-    json.dump({"best": best, "types": types},
+    json.dump({"lowest_rps_on_single_split": best, "shipped": SHIPPED, "types": types,
+               "note": "the shipped configuration is chosen with the rolling-origin evaluation "
+                       "(docs/rolling_evaluation.md), which matches how the map is refreshed"},
               open(os.path.join(ROOT, "data", "winner.json"), "w"), indent=2)
-    print(f"\nWINNER (lowest RPS): {best}", flush=True)
+    print(f"\nLowest RPS on this single split: {best}  (shipped: {SHIPPED})", flush=True)
 
 
 def write_report(results, se, dse, best, train, test, d0, split, types):
@@ -217,10 +256,14 @@ def write_report(results, se, dse, best, train, test, d0, split, types):
              f"\n**Complaint types modeled ({len(types)}):** "
              + ", ".join(types) + "\n",
              "\n## Selection\n",
-             f"\n**Winner (lowest overall RPS, guardrails in §7.4): `{best}`**\n",
+             f"\n**Lowest RPS on this single 12-month split: `{best}`.** The shipped configuration is "
+             f"`{SHIPPED}`: it is chosen with the rolling-origin evaluation "
+             f"([rolling_evaluation.md](rolling_evaluation.md)), which refits at each month start and "
+             f"predicts only the next month, as the deployed map does. A single split trains once and "
+             f"predicts up to 12 months ahead, which favors long memory (see the notes below).\n",
              "\n## Results table\n",
-             "\n| config | RPS all | ±SE | ΔRPS vs best | ±SE | LL all | LL n=0 | LL n<30 | LL n≥30 | RPS n<30 | ECE₂₄ₕ | ECE₇d | cov₉₀ |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "\n| config | RPS all | ±SE | ΔRPS vs best | ±SE | LL all | LL n=0 | LL n<30 | LL n≥30 | RPS n<30 | ECE₂₄ₕ | ECE₇d | cov₉₀ | z² sparse | z² dense |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in sorted(results, key=lambda x: x["rps_all"]):
         n = r["name"]
         lines.append(
@@ -229,15 +272,20 @@ def write_report(results, se, dse, best, train, test, d0, split, types):
             f"{r['ll_all']:.4f} | {r.get('ll_n=0',float('nan')):.4f} | "
             f"{r.get('ll_n<30',float('nan')):.4f} | {r.get('ll_n>=30',float('nan')):.4f} | "
             f"{r.get('rps_n<30',float('nan')):.5f} | {r['ece_24']:.4f} | "
-            f"{r['ece_7d']:.4f} | {r['cov90']:.3f} |")
+            f"{r['ece_7d']:.4f} | {r['cov90']:.3f} | {r['z2_n<30']:.2f} | {r['z2_n>=30']:.2f} |")
     lines += ["\n## Cleaning funnel (§6)\n", "\n| step | rows |", "|---|---|"]
     for k, v in funnel.items():
         if isinstance(v, int):
             lines.append(f"| {k} | {v:,} |")
     # kappa table for the winner
-    wtab = next(r["kappa_table"] for r in results if r["name"] == best)
-    lines.append("\n## Estimated concentration κ (winner, by level & type)\n")
+    wtab = next(r["kappa_table"] for r in results if r["name"] == SHIPPED)
+    lines.append("\n## Estimated concentration κ (shipped configuration, by level & type)\n")
     lines.append("\n```json\n" + json.dumps(wtab, indent=2) + "\n```\n")
+    # hand-maintained interpretation lives in docs/evaluation_notes.md so that
+    # regenerating the tables never discards it
+    notes = os.path.join(ROOT, "docs", "evaluation_notes.md")
+    if os.path.exists(notes):
+        lines.append("\n" + open(notes).read())
     open(os.path.join(ROOT, "docs", "evaluation_results.md"), "w").write("\n".join(lines))
 
 
