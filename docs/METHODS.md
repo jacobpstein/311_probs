@@ -319,10 +319,11 @@ bootstrap over tract × type cells**.
 | Hierarchy, fixed blending | 0.10365 | +0.00075 |
 | Hierarchy, learned κ per type | 0.10316 | +0.00026 |
 | Hierarchy, learned κ per type & level | 0.10318 | +0.00028 |
-| **+ time decay, 90-day half-life (shipped)** | **0.10302** | +0.00012 |
+| + time decay, 90-day half-life (previous model) | 0.10302 | +0.00012 |
 | + time decay, 180-day half-life | 0.10290 | best |
 | + time decay, 365-day half-life | 0.10297 | +0.00007 |
 | + time decay, 90-day, sibling-only prior | 0.10300 | +0.00010 |
+| **+ time decay, 90-day, separate pooling per threshold (shipped)** | **0.10297** | +0.00007 |
 
 > The biggest effect by far is letting thin blocks borrow from their neighborhood: the
 > no-pooling baselines are clearly worse, and on blocks the model had never seen they collapse
@@ -339,17 +340,21 @@ partly an artifact: it trains once and predicts up to a year ahead, which penali
 memory, whereas the deployed map is refit weekly and only ever predicts the near future. The
 rolling-origin test is the one that matches deployment:
 
-| Half-life | RPS vs. shipped 90 days (± SE) |
+| Half-life (nine-bin model) | RPS vs. its 90-day version (± SE) |
 |---|---|
 | 45 days | +0.00003 ± 0.00004 |
 | 60 days | +0.00001 ± 0.00002 |
-| **90 days (shipped)** | — |
+| **90 days** | — |
 | 120 days | +0.00000 ± 0.00001 |
 | 180 days | +0.00004 ± 0.00003 |
 | 365 days | +0.00014 ± 0.00005 |
 | none | +0.00040 ± 0.00008 |
 
-Decay matters; the value between 45 and 180 days does not, so 90 stays.
+Decay matters; the value between 45 and 180 days does not. The same test on the shipped
+per-threshold model gives 45 days −0.00010 ± 0.00003 in RPS but +0.0026 ± 0.0004 in log-loss
+and 180 days +0.00014 ± 0.00003 in RPS, so 90 stays. Against the nine-bin model with the same
+decay, the per-threshold model is better by 0.00019 ± 0.00002 in RPS
+([rolling_evaluation.md](rolling_evaluation.md)).
 
 ### 6.1 The uncertainty story: what the intervals had to learn the hard way
 
@@ -370,10 +375,10 @@ is tiny, so any systematic movement lands outside the interval. The fix is a per
 per-threshold **additive regime variance** σ estimated from rolling temporal holdouts inside
 the training window: half-width = 1.645·√(sampling variance + σ²), additive rather than
 multiplicative so sparse cells are only modestly widened. On the current data, cells with at
-least 50 test requests are covered 90.8% of the time, and in sparse cells (fewer than 30
-training requests, at least 10 test requests) the squared standardized residual is 1.14 with
-90.2% of cells inside their interval, both close to the targets. The 7-day calibration error
-is 0.017.
+least 50 test requests are covered 91.1% of the time, and in sparse cells (fewer than 30
+training requests, at least 10 test requests) the squared standardized residual is 1.05 with
+90.7% of cells inside their interval, both close to the targets. The 7-day calibration error
+is 0.016.
 
 Three follow-up checks on the shipped model ([robustness_checks.md](robustness_checks.md),
 [interval_calibration_rolling.md](interval_calibration_rolling.md)):

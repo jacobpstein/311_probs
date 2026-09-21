@@ -3,7 +3,6 @@ data/raw/
 data/prepared.parquet
 
 # Agent / editor tooling — not part of the project
-.claude/
 .DS_Store
 __pycache__/
 *.pyc

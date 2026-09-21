@@ -1,6 +1,8 @@
 # How Fast Does New York Fix It?
 
-**Live map → https://jacobpstein.github.io/311_probs/**
+**Live map → https://jacobpstein.github.io/311_probs/**  ·  **Historical analysis → https://jacobpstein.github.io/311_probs/analysis/**
+
+Data: [NYC Open Data — 311 Service Requests from 2010 to Present](https://data.cityofnewyork.us/resource/erm2-nwe9) (dataset `erm2-nwe9`, City of New York, retrieved through the Socrata API). Not affiliated with the City of New York.
 
 Interactive census-tract map of the probability a NYC 311 request is resolved within
 different time windows, powered by a Bayesian hierarchical model fit on a rolling
@@ -121,17 +123,29 @@ improves at every threshold (`docs/cutwise_evaluation.md`, `docs/rolling_evaluat
 ### Validation
 The estimator survived an adversarial audit (`docs/statistical_review.md`) that
 re-implemented the core math independently and re-checked all 51,150 published estimates.
-It found and fixed two defects: (1) the pooling routine used Minka's fixed-point iteration,
+It found and fixed defects and limitations, including: (1) the pooling routine used Minka's fixed-point iteration,
 which converged well short of the true optimum on this data and under-pooled small blocks —
 replaced with direct optimization of the marginal likelihood over κ; and (2) the credible
 intervals were overconfident — an even/odd calendar-day split (no possible time trend
 between halves) showed nominal 90% intervals covering reality only ~50% of the time, so an
-additive **regime-variance** term for month-to-month drift was added, restoring coverage.
-A same-season-last-year blending kernel was tested and *not* adopted (a statistical dead
-heat on the holdout).
+additive **regime-variance** term for month-to-month drift was added, which brings coverage
+close to nominal on the evaluation split. A later follow-up (`docs/robustness_checks.md`)
+showed most of that even/odd shortfall was a comparison artifact (the held-out half is itself
+a finite sample) plus day-to-day clustering of outcomes, and that batch closures are not the
+cause. Other findings from the audits: requests with no tract had been counted in one tract
+(fixed and guarded by export checks); the intervals originally ignored the uncertainty of the
+neighborhood mean a tract borrows (fixed); and one pooling strength shared across all bins
+over-smoothed the 24-hour rate (fixed by the per-threshold model above). A same-season-last-year
+blending kernel, a sibling-only prior, pooling strengths fitted on raw counts and a lower
+holdout threshold for the interval calibration were tested and *not* adopted.
+
+**Known limitation.** Under the deployed protocol (regime variance re-estimated before each
+of 11 months, next month scored) the nominal 90% intervals cover about 87% of tract × type
+cells; Snow or Ice and Noise - Street/Sidewalk are the weakest types
+(`docs/interval_calibration_rolling.md`).
 
 ### What the historical analysis found
-Refitting the model to 2010–2026 (`docs/historical_analysis.qmd`) surfaces three findings
+Refitting the model to 2010–2026 ([live report](https://jacobpstein.github.io/311_probs/analysis/), source `docs/historical_analysis.qmd`) surfaces three findings
 that survive the composition and artifact controls: (1) most of the apparent citywide
 speed-up is **composition** — the complaint mix shifting toward fast-closing categories
 (noise), not agencies getting faster; (2) trajectories are **agency-shaped, not

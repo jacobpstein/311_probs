@@ -19,6 +19,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Publish the historical analysis alongside the map
+        run: |
+          mkdir -p web/analysis
+          cp docs/historical_analysis.html web/analysis/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./web

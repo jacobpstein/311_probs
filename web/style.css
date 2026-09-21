@@ -172,6 +172,8 @@ body.panel-open #scrubber { left:calc(50% - 208px); }
 #methods[open] summary::before { content:"▾ "; }
 #methods p { font-size:12px; color:var(--text-2); line-height:18px; }
 #methods .fine { color:var(--text-3); font-size:11px; }
+#methods .links a { color:var(--accent); text-decoration:none; }
+#methods .links a:hover { text-decoration:underline; }
 
 .maplibregl-ctrl-attrib { font-size:10px; }
 

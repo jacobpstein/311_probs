@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>How Fast Does New York Fix It?</title>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-<link href="style.css?v=5" rel="stylesheet" />
+<link href="style.css?v=6" rel="stylesheet" />
 </head>
 <body>
 <div id="map"></div>
@@ -101,7 +101,13 @@
   <details id="methods">
     <summary>How we estimate this</summary>
     <p>Every dot on this map starts with real 311 requests and how long each one took to close. Because some tracts have thousands of requests and others only a handful, we use a statistical model that lets small tracts borrow strength from their neighborhood and borough — so a quiet block still gets a fair estimate instead of a noisy one. The faded ends of each bar show the plausible range: the less local data, the wider the range. Resolution times come from the city's own records of when requests were closed.</p>
-    <p class="fine">Data: NYC Open Data, 311 Service Requests · Model: Bayesian hierarchical (tract → neighborhood → borough → city) · Not affiliated with the City of New York.</p>
+    <p class="fine">Data: NYC Open Data, 311 Service Requests (updated weekly) · Model: Bayesian hierarchical (tract → neighborhood → borough → city) · Not affiliated with the City of New York.</p>
+    <p class="fine links">
+      <a href="https://data.cityofnewyork.us/resource/erm2-nwe9" target="_blank" rel="noopener">NYC Open Data: 311 Service Requests</a> ·
+      <a href="analysis/" target="_blank" rel="noopener">Historical analysis by administration</a> ·
+      <a href="https://github.com/jacobpstein/311_probs/blob/main/docs/METHODS.md" target="_blank" rel="noopener">Methods</a> ·
+      <a href="https://github.com/jacobpstein/311_probs" target="_blank" rel="noopener">Source code</a>
+    </p>
   </details>
 </aside>
 
