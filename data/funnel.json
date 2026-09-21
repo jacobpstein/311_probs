@@ -1,21 +1,21 @@
 {
-  "raw rows": 7523402,
-  "after unique_key dedupe": 7523402,
-  "after double-submission collapse": 7237165,
-  "after created_date parse": 7237165,
-  "closed_status_null_closed_date_dropped": 17302,
-  "after closed-but-no-closed_date drop": 7219863,
-  "after negative-duration drop": 7218297,
-  "exact_zero_duration_dropped": 131143,
-  "after zero-duration drop": 7087154,
+  "raw rows": 7524923,
+  "after unique_key dedupe": 7524923,
+  "after double-submission collapse": 7238676,
+  "after created_date parse": 7238676,
+  "closed_status_null_closed_date_dropped": 17202,
+  "after closed-but-no-closed_date drop": 7221474,
+  "after negative-duration drop": 7219900,
+  "exact_zero_duration_dropped": 131123,
+  "after zero-duration drop": 7088777,
   "sub_minute_by_type_top": {
-    "Noise - Residential": 2844,
-    "Illegal Parking": 2591,
-    "Water Maintenance": 2397,
+    "Noise - Residential": 2842,
+    "Illegal Parking": 2595,
+    "Water Maintenance": 2402,
     "Drug Activity": 975,
-    "Noise - Street/Sidewalk": 895
+    "Noise - Street/Sidewalk": 894
   },
-  "batch_closed_flagged": 115587,
-  "tract_assigned": 6971059,
-  "after geography filter": 7081477
+  "batch_closed_flagged": 115761,
+  "tract_assigned": 6972628,
+  "after geography filter": 7083099
 }
